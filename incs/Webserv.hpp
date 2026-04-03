@@ -7,5 +7,8 @@
 #include <sstream>
 #include <stdexcept>
 #include "colors.hpp"
-#include "Parser.hpp"
 
+//parsing
+#include "Parser.hpp"
+#include "LocationConfig.hpp"
+#include "ServerConfig.hpp"

@@ -1,7 +1,5 @@
 #include "../incs/Webserv.hpp"
 
-#include "../incs/Webserv.hpp"
-
 int main(int ac, char **av) {
     if (ac != 2) {
         std::cout << RED << "bad arguments correct way :" << RESET << std::endl;

@@ -6,20 +6,20 @@ Parser::~Parser() {}
 
 std::string Parser::peek() {
     if (pos >= tokens.size())
-        throw std::runtime_error("Error: unexpected end of file");
+        throw std::runtime_error(std::string(RED) + "Error: unexpected end of file" + RESET);
     return (tokens[pos]);
 }
 
 std::string Parser::get() {
     if (pos >= tokens.size())
-        throw std::runtime_error("Error: unexpected end of file");
+        throw std::runtime_error(std::string(RED) + "Error: unexpected end of file" + RESET);
     return tokens[pos++];
 }
 
 void Parser::expect(const std::string& token) {
     std::string getting = get();
     if (getting != token)
-        throw std::runtime_error("Error: expected '" + token + "' but got '" + getting + "'");
+        throw std::runtime_error(std::string(RED) + "Error: expected '" + token + "' but got '" + getting + "'" + RESET);
 }
 
 void Parser::tokenize(const std::string& content) {
@@ -70,7 +70,7 @@ void Parser::tokenize(const std::string& content) {
 void Parser::loadFile(const std::string& path) {
     std::ifstream file(path.c_str());
     if (!file.is_open())
-        throw std::runtime_error("Error: cannot open config file");
+        throw std::runtime_error(std::string(RED) + "Error: cannot open config file" + RESET);
     
     std::stringstream buffer;
     buffer << file.rdbuf();
@@ -78,43 +78,52 @@ void Parser::loadFile(const std::string& path) {
     tokenize(content);
 }
 
-void Parser::parseLocation() {
-    std::string path = get();
-    std::cout << " [Location] Path: " << path << std::endl;
+void Parser::parseLocation(ServerConfig& current_server) {
+    LocationConfig current_location;
+    current_location.path = get();
+    std::cout <<  MAGENTA << " [Location] Path: " << BLUE << current_location.path << RESET << std::endl;
     expect("{");
 
     while (peek() != "}") {
         std::string directive = get();
 
         if (directive == "root") {
-            std::cout << "   Root: " << get() << std::endl;
+            current_location.root = get();
+            std::cout << MAGENTA << "   Root: " << BLUE << current_location.root << RESET << std::endl;
             expect(";");
         }
         else if (directive == "index") {
-            std::cout << "   Index: " << get() << std::endl;
+            current_location.index = get();
+            std::cout << MAGENTA << "   Index: " << BLUE << current_location.index << RESET << std::endl;
             expect(";");
         }
         else if (directive == "autoindex") {
-            std::cout << "   Autoindex: " << get() << std::endl;
+            std::string autoindex_value = get();
+            current_location.autoindex = (autoindex_value == "on" || autoindex_value == "true");
+            std::cout << MAGENTA << "   Autoindex: " << BLUE << autoindex_value << RESET << std::endl;
             expect(";");
         }
         else if (directive == "allow_methods") {
-            std::cout << "    Methods: ";
+            std::cout << MAGENTA << "    Methods: ";
             
             while (peek() != ";") {
-                std::cout << get() << " ";
+                current_location.methods.push_back(get());
+                std::cout << BLUE << current_location.methods.back() << " " << RESET;
             }
             std::cout << std::endl;
             
             expect(";");
         }
         else
-            throw std::runtime_error("Error: unknown directive '" + directive + "'in location block");
+            throw std::runtime_error(std::string(RED) + "Error: unknown directive '" + directive + "'in location block" + RESET);
     }
+    current_server.addLocation(current_location);
     expect("}");
+    
 }
 
 void Parser::parseServer() {
+    ServerConfig current_server;
     get();
     expect("{");
 
@@ -122,29 +131,36 @@ void Parser::parseServer() {
         std::string directive = get();
 
         if (directive == "listen") {
-            std::cout << "Port: " << get() << std::endl;
+            current_server.port = std::atoi(get().c_str());
+            std::cout << YELLOW << "Port: " << RESET << current_server.port << std::endl;
             expect(";");
         }
         else if (directive == "server_name") {
-            std::cout << "Server Name: " << get() << std::endl;
+            current_server.server_name = get();
+            std::cout << YELLOW << "Server Name: " << RESET << current_server.server_name << std::endl;
             expect(";");
         }
         else if (directive == "error_page") {
-            std::cout << "Error Page: " << get() << " -> " << get() << std::endl;
+            int code = std::atoi(get().c_str());
+            std::string page = get();
+            current_server.error_pages[code] = page;
+            std::cout << YELLOW << "Error Page: " << RESET << code << " -> " << page << std::endl;
             expect(";");
         }
         else if (directive == "client_max_body_size") {
-            std::cout << "Max Body Size: " << get() << std::endl;
+            current_server.client_max_body = std::atoi(get().c_str());
+            std::cout << YELLOW << "Max Body Size: " << RESET << current_server.client_max_body << std::endl;
             expect(";");
         }
         else if (directive == "location") {
-            parseLocation();
+            parseLocation(current_server);
         }
         else {
-            throw std::runtime_error("Error: unknown directive '" + directive + "' in server block");
+            throw std::runtime_error(std::string(RED) + "Error: unknown directive '" + directive + "' in server block" + RESET);
         }
     }
     expect("}");
+    this->_servers.push_back(current_server);
 }
 
 void Parser::parse() {
