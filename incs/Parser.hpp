@@ -27,6 +27,8 @@ class Parser {
         Parser();
         ~Parser();
 
+        const std::vector<ServerConfig>& getServers() const;
+
         void loadFile(const std::string& path);
         void tokenize(const std::string& content);
         void parse();

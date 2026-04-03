@@ -12,3 +12,7 @@
 #include "Parser.hpp"
 #include "LocationConfig.hpp"
 #include "ServerConfig.hpp"
+
+
+//server
+#include "ServerManager.hpp"

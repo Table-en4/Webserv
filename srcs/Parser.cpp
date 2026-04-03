@@ -4,6 +4,10 @@ Parser::Parser() : pos(0) {}
 
 Parser::~Parser() {}
 
+const std::vector<ServerConfig>& Parser::getServers() const {
+   return _servers;
+}
+
 std::string Parser::peek() {
     if (pos >= tokens.size())
         throw std::runtime_error(std::string(RED) + "Error: unexpected end of file" + RESET);
