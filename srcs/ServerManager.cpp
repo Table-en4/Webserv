@@ -46,64 +46,105 @@ void ServerManager::handelNewConnection(int server_fd) {
 	addToEpoll(client_fd, EPOLLIN);
 }
 
-void ServerManager::handleClient(int client_fd) {
-    char buffer[8192] = {0};
-    int bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
+void ServerManager::closeClient(int client_fd) {
+	epoll_ctl(_epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
+	_client_to_config.erase(client_fd);
+	_client_buffers.erase(client_fd);
+	close(client_fd);
+}
 
-    if (bytes_read <= 0) {
-        epoll_ctl(_epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
-        close(client_fd);
+void ServerManager::setEpollOut(int fd) {
+    struct epoll_event ev;
+    ev.events = EPOLLOUT;
+    ev.data.fd = fd;
+    epoll_ctl(_epoll_fd, EPOLL_CTL_MOD, fd, &ev);
+    //EPOLL_CTL_MOD modifie un fd deja utilisé
+    //EPOLL_CTL_ADD ajoute un doublon pour éviter la réecriture sur un fd
+}
+
+void ServerManager::sendResponse(int client_fd) {
+    std::string& response = _write_buffers[client_fd];
+
+    if (response.empty()) {
+        closeClient(client_fd);
         return;
     }
 
-    std::string raw(buffer, bytes_read);
-    HttpRequest req;
-    HttpResponse res;
+    //IMPORTANT: send n'evoie qu'une partie car on boucle sur epoll
+    ssize_t sent = send(client_fd, response.c_str(), response.size(), 0);
 
-	//on récup la config du bon server (par port)
-	//on prend la premiere juste pour le test
-	//faudra que je fasse un HostHeader
-    std::string response;
-    try {
-        req.parse(raw);
-        int config_idx = 0;
-        if (_client_to_config.count(client_fd))
-            config_idx = _client_to_config[client_fd];
-        response = res.build(req, _configs[config_idx]);
-    }
-    catch (...) {
-        response = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";
+    if (sent < 0) {
+        closeClient(client_fd);
+        return;
     }
 
-    send(client_fd, response.c_str(), response.size(), 0);
-    epoll_ctl(_epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
-    _client_to_config.erase(client_fd);
-    close(client_fd);
+    response.erase(0, sent);
+
+    if (response.empty()) {
+        closeClient(client_fd);
+    }
 }
 
-void ServerManager::run() {
-	struct epoll_event events[64];
+/*
+recv() -> append dans _client_buffers[fd]
+chercher "\r\n\r\n" dans le buffer -> headers complets ?
+    non -> return (on attend le prochain EPOLLIN)
+    oui -> extraire Content-Length
+          vérifier contre client_max_body -> 413 si dépassé
+          body complet ? -> traiter
+          non -> return (on attend encore)
+traiter -> envoyer réponse -> cleanup
+*/
+void ServerManager::handleClient(int client_fd) {
+    char tmp[8192];
+    int bytes_read = recv(client_fd, tmp, sizeof(tmp) - 1, 0);
 
-	while (true) {
-		int n = epoll_wait(_epoll_fd, events, 64, -1);
-		if (n < 0) {
-			if (errno == EINTR)
-				continue;
-			throw std::runtime_error(std::string(RED) + "Error: epoll_wait failed" + RESET);
-		}
-		for (int i = 0; i < n; i++) {
-			int fd = events[i].data.fd;
+    if (bytes_read <= 0) {
+        closeClient(client_fd);
+        return;
+    }
+    tmp[bytes_read] = '\0';
+    _client_buffers[client_fd] += std::string(tmp, bytes_read);
 
-			if (events[i].events & (EPOLLERR | EPOLLHUP)) {
-				close(fd);
-				continue;
-			}
-			if (isServerFd(fd))
-				handelNewConnection(fd);
-			else if (events[i].events & EPOLLIN)
-				handleClient(fd);
-		}
-	}
+    std::string& buf = _client_buffers[client_fd];
+
+    size_t header_end = buf.find("\r\n\r\n");
+    if (header_end == std::string::npos)
+        return;
+
+    size_t body_start = header_end + 4;
+    size_t content_length = 0;
+    size_t cl_pos = buf.find("Content-Length:");
+    if (cl_pos != std::string::npos && cl_pos < header_end) {
+        content_length = std::atoi(buf.c_str() + cl_pos + 15);
+
+        int cfg_idx = _client_to_config.count(client_fd) ? _client_to_config[client_fd] : 0;
+        if (content_length > _configs[cfg_idx].client_max_body) {
+            _write_buffers[client_fd] = "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            setEpollOut(client_fd);
+            return;
+        }
+
+        if (buf.size() - body_start < content_length)
+            return;
+    }
+
+    //c'est ici qu'on construire la réponse
+    HttpRequest req;
+    HttpResponse res;
+    std::string response;
+    try {
+        req.parse(buf);
+        int cfg_idx = _client_to_config.count(client_fd) ? _client_to_config[client_fd] : 0;
+        response = res.build(req, _configs[cfg_idx]);
+    }
+    catch (...) {
+        response = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    }
+
+    //on stocke et on demande EPOLLOUT
+    _write_buffers[client_fd] = response;
+    setEpollOut(client_fd);
 }
 
 void ServerManager::initServers(const std::vector<ServerConfig>& configs) {
@@ -138,7 +179,7 @@ void ServerManager::initServers(const std::vector<ServerConfig>& configs) {
 			throw std::runtime_error(std::string(RED) + "Error: Bind failed" + RESET);
 		}
 
-		// 10 = la taille de la fille d'attente des connexions
+		//10 = la taille de la fille d'attente des connexions
 		if (listen(server_fd, 10) < 0) {
 			close(server_fd);
 			throw std::runtime_error(std::string(RED) + "Error: listen failed" + RESET);
@@ -148,4 +189,32 @@ void ServerManager::initServers(const std::vector<ServerConfig>& configs) {
 		addToEpoll(server_fd, EPOLLIN);
 		std::cout << GREEN << "Server run and listening port " << configs[i].port << RESET << std::endl;
 	}
+}
+
+void ServerManager::run() {
+    struct epoll_event events[64];
+
+    while (true) {
+        int n = epoll_wait(_epoll_fd, events, 64, -1);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            throw std::runtime_error("Error: epoll_wait failed");
+        }
+
+        for (int i = 0; i < n; i++) {
+            int fd = events[i].data.fd;
+
+            if (events[i].events & (EPOLLERR | EPOLLHUP)) {
+                closeClient(fd);
+                continue;
+            }
+
+            if (isServerFd(fd))
+                handelNewConnection(fd);
+            else if (events[i].events & EPOLLOUT)
+                sendResponse(fd);      // ← NOUVEAU
+            else if (events[i].events & EPOLLIN)
+                handleClient(fd);
+        }
+    }
 }

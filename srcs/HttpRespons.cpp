@@ -1,5 +1,7 @@
 #include "../incs/Webserv.hpp"
 
+HttpResponse::HttpResponse() : _matched_location(NULL) {}
+
 std::string HttpResponse::getStatusMessage(int code) {
     if (code == 200)
 		return "Ok";
@@ -38,9 +40,46 @@ std::string HttpResponse::getMimeType(const std::string& path) {
     return "application/octet-stream";
 }
 
+bool HttpResponse::isDirectory(const std::string& path) {
+  struct stat st;
+  return (stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode));
+}
+
 bool HttpResponse::fileExists(const std::string& path) {
     struct stat st;
     return (stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode));
+}
+
+std::string HttpResponse::generateAutoindex(const std::string& dir_path, const std::string& url_path) {
+  DIR* dir = opendir(dir_path.c_str());
+  if (!dir)
+    throw std::runtime_error("403");
+  
+  std::ostringstream html;
+  html << "<html><head><title>Index of " << url_path << "</title></head><body>"
+       << "<h1>Index of " << url_path << "</h1><hr><pre>";
+  
+  struct dirent* entry;
+  while ((entry = readdir(dir)) != NULL) {
+    std::string name = entry->d_name;
+    if (name == ".")
+      continue;
+    std::string full_path = dir_path + "/" + name;
+    struct stat st;
+    std::string display = name;
+
+    if (stat(full_path.c_str(), &st) == 0 && S_ISDIR(st.st_mode))
+      display += "/";
+    
+    html << "a herf=\"" << url_path;
+    if (url_path.empty() || url_path[url_path.size() - 1] != '/')
+      html << "/";
+    html << name << "\"" << display << "</a>\n";
+  }
+  closedir(dir);
+
+  html << "</pre><hr></body></html>";
+  return html.str();
 }
 
 std::string HttpResponse::buildHeaders(int code, const std::string& contentType, size_t bodyLen) {
@@ -70,7 +109,6 @@ std::string HttpResponse::resolveFilePath(const HttpRequest& req, const ServerCo
 
     for (size_t i = 0; i < config.locations.size(); i++) {
         const std::string& loc_path = config.locations[i].path;
-
         if (req.path.substr(0, loc_path.size()) == loc_path) {
             if (loc_path.size() > best_len) {
                 best_len = loc_path.size();
@@ -83,19 +121,17 @@ std::string HttpResponse::resolveFilePath(const HttpRequest& req, const ServerCo
 
     bool method_ok = false;
     for (size_t i = 0; i < best->methods.size(); i++) {
-        if (best->methods[i] == req.method) {
-			method_ok = true;
-			break;
-		}
+        if (best->methods[i] == req.method) { method_ok = true; break; }
     }
     if (!method_ok)
-		throw std::runtime_error("405");
+        throw std::runtime_error("405");
 
-    //c'est ici qu'on construit le path
+    _matched_location = best;
+
     std::string root = best->root;
     std::string suffix = req.path.substr(best_len);
     if (suffix.empty() || suffix == "/")
-        suffix = "/" + best->index;
+        suffix = "/";
 
     return root + suffix;
 }
@@ -115,15 +151,47 @@ std::string HttpResponse::buildError(int code, const ServerConfig& config) {
 
 std::string HttpResponse::build(const HttpRequest& req, const ServerConfig& config) {
     try {
-        std::string filepath = resolveFilePath(req, config);
-        if (filepath.empty() || !fileExists(filepath))
+        std::string path = resolveFilePath(req, config);
+
+        if (path.empty())
             return buildError(404, config);
 
-        std::string body = serveFile(filepath);
+        //Cas 1 : c'est un dossier
+        if (isDirectory(path)) {
+            //Chercher l'index
+            std::string index_file = path;
+            if (index_file[index_file.size() - 1] != '/')
+                index_file += "/";
+
+            if (_matched_location && !_matched_location->index.empty())
+                index_file += _matched_location->index;
+            else
+                index_file += "index.html";
+
+            if (fileExists(index_file)) {
+                std::string body = serveFile(index_file);
+                return buildHeaders(200, getMimeType(index_file), body.size()) + body;
+            }
+
+            //Pas d'index -> autoindex ?
+            if (_matched_location && _matched_location->autoindex) {
+                std::string body = generateAutoindex(path, req.path);
+                return buildHeaders(200, "text/html", body.size()) + body;
+            }
+
+            //autoindex off et pas d'index -> 403
+            return buildError(403, config);
+        }
+
+        //Cas 2 : c'est un fichier
+        if (!fileExists(path))
+            return buildError(404, config);
+
+        std::string body = serveFile(path);
         if (body.empty())
             return buildError(403, config);
 
-        return buildHeaders(200, getMimeType(filepath), body.size()) + body;
+        return buildHeaders(200, getMimeType(path), body.size()) + body;
     }
     catch (const std::runtime_error& e) {
         int code = std::atoi(e.what());
