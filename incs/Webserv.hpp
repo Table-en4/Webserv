@@ -16,6 +16,10 @@
 #include "ServerConfig.hpp"
 
 
+//request
+#include "HttpRequest.hpp"
+#include "HttpRespons.hpp"
+
 //server
 #include "ServerManager.hpp"
 

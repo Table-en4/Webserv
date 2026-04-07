@@ -3,8 +3,8 @@ CCXX = c++
 CCXXFLAGS = -Wall -Werror -Wextra -std=c++98 -g3
 SRCS = srcs/main.cpp \
 	srcs/Parser.cpp srcs/LocationConfig.cpp srcs/ServerConfig.cpp \
-	srcs/ServerManager.cpp srcs/Routes.cpp
-OBJS = $(SRCS:..cpp=.o)
+	srcs/ServerManager.cpp srcs/HttpRequest.cpp srcs/HttpRespons.cpp
+OBJS = $(SRCS:.cpp=.o)
 
 all: $(NAME)
 
@@ -14,7 +14,7 @@ $(NAME): $(OBJS)
 clean:
 		rm -f $(OBJS)
 
-fclean:
+fclean: clean
 		rm -f $(NAME)
 
 re: fclean all
