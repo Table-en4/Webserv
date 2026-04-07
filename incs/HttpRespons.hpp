@@ -6,6 +6,7 @@
 #include <sstream>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <cstdio>
 #include "HttpRequest.hpp"
 #include "ServerConfig.hpp"
 
@@ -22,6 +23,10 @@ class HttpResponse {
 		std::string getStatusMessage(int code);
 		std::string getMimeType(const std::string& path);
 		std::string generateAutoindex(const std::string& dir_path, const std::string& utl_path);
+		std::string handleDelete(const std::string& path, const ServerConfig& config);
+		std::string handlePost(const HttpRequest& req, const std::string& path, const ServerConfig& config);
+		std::string handleDirectory(const std::string& path, const HttpRequest& req, const ServerConfig& config);
+		std::string handleFile(const std::string& path, const ServerConfig& config);
 		bool		fileExists(const std::string& path);
 		bool		isDirectory(const std::string& path);
 

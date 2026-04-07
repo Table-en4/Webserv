@@ -149,49 +149,86 @@ std::string HttpResponse::buildError(int code, const ServerConfig& config) {
     return buildHeaders(code, "text/html", body.size()) + body;
 }
 
+/*
+peut-etre créer une classe ou des fichiers à part pour gérer ca je sais pas
+faudra que tu me donnes ton avis pour la lisibilité du code
+*/
+
+std::string HttpResponse::handleDelete(const std::string& path, const ServerConfig& config) {
+  if (!fileExists(path))
+    return buildError(404, config);
+  
+  if (std::remove(path.c_str()) == 0) {
+    std::string body = "<html><body><h1>200 Ok: File deleted successfully.</h1></body></html>";
+    return buildHeaders(200, "text/html", body.size()) + body;
+  }
+  else
+    return buildError(403, config);
+}
+
+std::string HttpResponse::handlePost(const HttpRequest& req, const std::string& path, const ServerConfig& config) {
+  if (isDirectory(path))
+    return buildError(403, config);
+  
+  std::ofstream outfile(path.c_str(), std::ios::out | std::ios::binary);
+  if (!outfile.is_open())
+    return buildError(403, config);
+  
+  outfile.write(req.body.c_str(), req.body.size());
+  outfile.close();
+
+  std::string body = "<html><body><h1>201 Created: File saved successfully.</h1></body></html>";
+  return buildHeaders(201, "text/html", body.size()) + body;
+}
+
+std::string HttpResponse::handleDirectory(const std::string& path, const HttpRequest& req, const ServerConfig& config) {
+  std::string index_file = path;
+  if (index_file.back() != '/')
+    index_file += "/";
+
+  if (_matched_location && !_matched_location->index.empty())
+    index_file += _matched_location->index;
+  else
+    index_file += "index.html";
+
+  if (fileExists(index_file)) {
+    std::string body = serveFile(index_file);
+    return buildHeaders(200, getMimeType(index_file), body.size()) + body;
+  }
+
+  if (_matched_location && _matched_location->autoindex) {
+    std::string body = generateAutoindex(path, req.path);
+    return buildHeaders(200, "text/html", body.size()) + body;
+  }
+
+  return buildError(403, config);
+}
+
+std::string HttpResponse::handleFile(const std::string& path, const ServerConfig& config) {
+  if (!fileExists(path))
+    return buildError(404, config);
+
+  std::string body = serveFile(path);
+  if (body.empty())
+    return buildError(403, config);
+
+  return buildHeaders(200, getMimeType(path), body.size()) + body;
+}
+
 std::string HttpResponse::build(const HttpRequest& req, const ServerConfig& config) {
     try {
         std::string path = resolveFilePath(req, config);
-
         if (path.empty())
             return buildError(404, config);
 
-        //Cas 1 : c'est un dossier
-        if (isDirectory(path)) {
-            //Chercher l'index
-            std::string index_file = path;
-            if (index_file[index_file.size() - 1] != '/')
-                index_file += "/";
+        if (req.method == "DELETE")
+            return handleDelete(path, config);
+        if (req.method == "POST")
+            return handlePost(req, path, config);
+        if (isDirectory(path))
+            return handleDirectory(path, req, config);
 
-            if (_matched_location && !_matched_location->index.empty())
-                index_file += _matched_location->index;
-            else
-                index_file += "index.html";
-
-            if (fileExists(index_file)) {
-                std::string body = serveFile(index_file);
-                return buildHeaders(200, getMimeType(index_file), body.size()) + body;
-            }
-
-            //Pas d'index -> autoindex ?
-            if (_matched_location && _matched_location->autoindex) {
-                std::string body = generateAutoindex(path, req.path);
-                return buildHeaders(200, "text/html", body.size()) + body;
-            }
-
-            //autoindex off et pas d'index -> 403
-            return buildError(403, config);
-        }
-
-        //Cas 2 : c'est un fichier
-        if (!fileExists(path))
-            return buildError(404, config);
-
-        std::string body = serveFile(path);
-        if (body.empty())
-            return buildError(403, config);
-
-        return buildHeaders(200, getMimeType(path), body.size()) + body;
+        return handleFile(path, config);
     }
     catch (const std::runtime_error& e) {
         int code = std::atoi(e.what());

@@ -12,6 +12,27 @@ const std::vector<int>& ServerManager::getServerFds() const {
     return _server_fds;
 }
 
+const ServerConfig& ServerManager::getServerConfig(int client_fd, const HttpRequest& req) {
+    int default_cfg_idx = _client_to_config[client_fd];
+    int client_port = _configs[default_cfg_idx].port;
+
+    std::string host = "";
+    if (req.headers.count("Host")) {
+        host = req.headers.at("Host");
+        size_t colon_pos = host.find(':');
+        if (colon_pos != std::string::npos)
+            host = host.substr(0, colon_pos);
+    }
+
+    for (size_t i = 0; i < _configs.size(); i++) {
+        if (_configs[i].port == client_port && _configs[i].server_name == host) {
+            return _configs[i];
+        }
+    }
+
+    return _configs[default_cfg_idx];
+}
+
 bool ServerManager::isServerFd(int fd) const {
     for (size_t i = 0; i < _server_fds.size(); i++) {
         if (_server_fds[i] == fd)
@@ -37,6 +58,12 @@ void ServerManager::handelNewConnection(int server_fd) {
 	if (client_fd < 0)
 		return ;
 
+    //gestion du multi plexing
+    if (fcntl(client_fd, F_SETFL, O_NONBLOCK) < 0) {
+        close(client_fd);
+        return ;
+    }
+
 	for (size_t i = 0; i < _server_fds.size(); i++) {
 		if (_server_fds[i] == server_fd) {
 			_client_to_config[client_fd] = i;
@@ -50,6 +77,7 @@ void ServerManager::closeClient(int client_fd) {
 	epoll_ctl(_epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
 	_client_to_config.erase(client_fd);
 	_client_buffers.erase(client_fd);
+    _write_buffers.erase(client_fd);
 	close(client_fd);
 }
 
@@ -74,6 +102,8 @@ void ServerManager::sendResponse(int client_fd) {
     ssize_t sent = send(client_fd, response.c_str(), response.size(), 0);
 
     if (sent < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return ;
         closeClient(client_fd);
         return;
     }
@@ -99,10 +129,17 @@ void ServerManager::handleClient(int client_fd) {
     char tmp[8192];
     int bytes_read = recv(client_fd, tmp, sizeof(tmp) - 1, 0);
 
-    if (bytes_read <= 0) {
+    if (bytes_read < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return ;
         closeClient(client_fd);
         return;
     }
+    if (bytes_read == 0) {
+        closeClient(client_fd);
+        return ;
+    }
+
     tmp[bytes_read] = '\0';
     _client_buffers[client_fd] += std::string(tmp, bytes_read);
 
@@ -135,8 +172,8 @@ void ServerManager::handleClient(int client_fd) {
     std::string response;
     try {
         req.parse(buf);
-        int cfg_idx = _client_to_config.count(client_fd) ? _client_to_config[client_fd] : 0;
-        response = res.build(req, _configs[cfg_idx]);
+        const ServerConfig& target_config = getServerConfig(client_fd, req);
+        response = res.build(req, target_config);
     }
     catch (...) {
         response = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
@@ -184,6 +221,12 @@ void ServerManager::initServers(const std::vector<ServerConfig>& configs) {
 			close(server_fd);
 			throw std::runtime_error(std::string(RED) + "Error: listen failed" + RESET);
 		}
+
+        if (fcntl(server_fd, F_SETFL, O_NONBLOCK) < 0) {
+            close(server_fd);
+            throw std::runtime_error(std::string(RED) + "Error: fcntl failed" + RESET);
+        }
+
 		_server_fds.push_back((server_fd));
 		_configs.push_back(configs[i]);
 		addToEpoll(server_fd, EPOLLIN);

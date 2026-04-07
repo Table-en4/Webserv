@@ -22,6 +22,62 @@ closeClient()
     → erase() dans les 3 maps
     → close(fd)
 
+# Gestion du multiplexing
+
+    accept() → fcntl(O_NONBLOCK) → addToEpoll(EPOLLIN)
+
+    EPOLLIN → recv()
+        EAGAIN → return (epoll rappellera)
+        0      → closeClient (déconnexion propre)
+        >0     → accumuler → requête complète ? → _write_buffers → setEpollOut()
+
+    EPOLLOUT → send()
+        EAGAIN → return (buffer kernel plein, epoll rappellera)
+        <0     → closeClient
+        ok     → erase() → tout envoyé ? → closeClient
+
+___
+# Virtual Hosting (Routage par server_name)
+
+Sélection de la bonne configuration pour un client
+
+    → Extraire l'en-tête "Host" depuis la requête parsée (ex: "tasty:8080" ou "localhost")
+    → Identifier le port d'arrivée du client via _client_to_config
+    → Parcourir _configs → correspondance exacte trouvée (port == port d'arrivée ET server_name == Host) ?
+        oui → utiliser cette ServerConfig spécifique
+        non → utiliser la ServerConfig par défaut (la première déclarée pour ce port)
+
+___
+# Traitement des Méthodes HTTP (HttpResponse)
+
+Validation de la route (resolveFilePath)
+
+    → Chercher la LocationConfig qui matche le plus longuement le chemin de la requête
+    → Vérifier si req.method est présente dans allow_methods
+        non → throw 405 (Method Not Allowed)
+        oui → concaténer root + chemin de la requête
+
+Logique GET
+
+    → path est un dossier ? 
+        → chercher le fichier index → trouvé ? lire le fichier
+        → pas d'index ? vérifier autoindex → on ? générer page HTML (generateAutoindex) → off ? throw 403
+    → path est un fichier ? 
+        → fileExists() ? lire et renvoyer 200 OK → sinon throw 404
+
+Logique POST (Upload)
+
+    → path est un dossier ? → throw 403
+    → std::ofstream en mode écriture (out | binary)
+    → écrire le contenu complet de req.body dans le fichier cible
+    → succès ? renvoyer 201 Created
+
+Logique DELETE
+
+    → fileExists() ?
+        non → throw 404
+        oui → std::remove() du fichier → succès ? renvoyer 200 OK → échec ? throw 403
+
 ___
 # Parsing
 

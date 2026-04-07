@@ -12,6 +12,7 @@
 #include <sys/epoll.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 class ServerManager {
 	private:
@@ -30,6 +31,8 @@ class ServerManager {
 		void setEpollOut(int fd);
 		void sendResponse(int client_fd);
 		bool isServerFd(int fd) const;
+
+		const ServerConfig& getServerConfig(int client_fd, const HttpRequest& req);
 
 	public:
 		ServerManager();
