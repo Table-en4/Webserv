@@ -3,6 +3,7 @@
 // callback function that is called whenever a request to '/' is made
 std::string RootHandler(struct Route route)
 {
+	std::cout << "ROT HANDLER" << std::endl;
 	std::ifstream file(route.html_file_path.c_str());
 
 	std::stringstream htmlPageContent;
@@ -35,6 +36,14 @@ Routes::Routes()
 		RootHandler
 	);
 
+	// homepage route 
+	this->addRoute(
+		"/caca",
+		Methods::GET,
+		"caca.html",
+		RootHandler
+	);
+
 }
 
 Routes::~Routes() {}
@@ -51,6 +60,7 @@ bool Routes::addRoute(
 	// TODO: check if route already exist later 
 
 	struct Route route;
+	route.req = nullptr;
 	route.path = path;
 	route.methods = methods;
 	route.html_file_path = "./routes/" + html_file_path;

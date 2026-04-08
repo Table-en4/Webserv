@@ -16,19 +16,22 @@ struct Methods {
 };
 
 // structure that represent a route
+class HttpRequest;
 struct Route
 {
 	std::string path;
 	Methods::Type methods; // 
 	std::string html_file_path;
 	RouteHandler func; // function to be called when client want to access any routes
+
+	HttpRequest *req; // pointeur initialisé à nul
+
 };
 
 class Routes
 {
-	std::vector<struct Route> _routes;
-
 	public:
+		std::vector<struct Route> _routes;
 		Routes();
 		~Routes();
 
