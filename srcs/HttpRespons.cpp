@@ -247,7 +247,7 @@ std::string HttpResponse::build(const HttpRequest& req, const ServerConfig& conf
             return handleDelete(path, config);
         if (req.method == "POST")
             return handlePost(req, path, config);
-        if (req.method == "GET")
+        if (req.method == "GET" && req.path.rfind("/cgi", 0) != 0 )
         {
           std::cout << "GET HANDLE " << std::endl;
           HttpRequest tmp_req = req;
