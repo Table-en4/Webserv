@@ -25,6 +25,7 @@ class HttpResponse {
 		std::string generateAutoindex(const std::string& dir_path, const std::string& utl_path);
 		std::string handleDelete(const std::string& path, const ServerConfig& config);
 		std::string handlePost(const HttpRequest& req, const std::string& path, const ServerConfig& config);
+		std::string handleGet(HttpRequest& req, ServerConfig& config);
 		std::string handleDirectory(const std::string& path, const HttpRequest& req, const ServerConfig& config);
 		std::string handleFile(const std::string& path, const ServerConfig& config);
 		bool		fileExists(const std::string& path);

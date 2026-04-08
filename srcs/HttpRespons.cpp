@@ -215,6 +215,28 @@ std::string HttpResponse::handleFile(const std::string& path, const ServerConfig
   return buildHeaders(200, getMimeType(path), body.size()) + body;
 }
 
+std::string HttpResponse::handleGet(HttpRequest& req, ServerConfig& config)
+{
+
+  for (size_t i = 0; i < config._routes_collections._routes.size(); i++)
+	{
+		// it check if the path correspond to any of the routes
+		if (config._routes_collections._routes[i].path == req.path)
+		{
+			std::string body = config._routes_collections._routes[i].func(config._routes_collections._routes[i]); // if yes we simply call the func
+
+			// jsp pq faut faire cet merde pr avoir la longueur du body mais bon
+			std::stringstream ss;
+			ss << body.length();
+			std::string htmlPageContentLengthStr = ss.str();
+
+      config._routes_collections._routes[i].req = &req;
+      return buildHeaders(200, "text/html", body.size()) + body;
+		}
+	}
+  return buildError(404, config);
+}
+
 std::string HttpResponse::build(const HttpRequest& req, const ServerConfig& config) {
     try {
         std::string path = resolveFilePath(req, config);
@@ -225,6 +247,13 @@ std::string HttpResponse::build(const HttpRequest& req, const ServerConfig& conf
             return handleDelete(path, config);
         if (req.method == "POST")
             return handlePost(req, path, config);
+        if (req.method == "GET")
+        {
+          std::cout << "GET HANDLE " << std::endl;
+          HttpRequest tmp_req = req;
+          ServerConfig tmp_config = config;
+          return handleGet(tmp_req, tmp_config);
+        }
         if (isDirectory(path))
             return handleDirectory(path, req, config);
 
