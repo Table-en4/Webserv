@@ -60,7 +60,7 @@ bool Routes::addRoute(
 	// TODO: check if route already exist later 
 
 	struct Route route;
-	route.req = nullptr;
+	route.req = NULL;
 	route.path = path;
 	route.methods = methods;
 	route.html_file_path = "./routes/" + html_file_path;

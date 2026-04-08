@@ -25,3 +25,6 @@
 
 // routes
 #include "Routes.hpp"
+
+//CGI
+#include "CgiHandler.hpp"

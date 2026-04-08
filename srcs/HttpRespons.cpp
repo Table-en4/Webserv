@@ -71,7 +71,7 @@ std::string HttpResponse::generateAutoindex(const std::string& dir_path, const s
     if (stat(full_path.c_str(), &st) == 0 && S_ISDIR(st.st_mode))
       display += "/";
     
-    html << "a herf=\"" << url_path;
+    html << "<a herf=\"" << url_path;
     if (url_path.empty() || url_path[url_path.size() - 1] != '/')
       html << "/";
     html << name << "\"" << display << "</a>\n";
@@ -130,12 +130,14 @@ std::string HttpResponse::resolveFilePath(const HttpRequest& req, const ServerCo
 
     std::string root = best->root;
     std::string suffix = req.path.substr(best_len);
+    
     if (suffix.empty() || suffix == "/")
         suffix = "/";
+    else if (root[root.length() - 1] != '/' && suffix[0] != '/')
+        root += "/";
 
     return root + suffix;
 }
-
 std::string HttpResponse::buildError(int code, const ServerConfig& config) {
     std::map<int, std::string>::const_iterator it = config.error_pages.find(code);
     std::string body;
@@ -183,7 +185,7 @@ std::string HttpResponse::handlePost(const HttpRequest& req, const std::string& 
 
 std::string HttpResponse::handleDirectory(const std::string& path, const HttpRequest& req, const ServerConfig& config) {
   std::string index_file = path;
-  if (index_file.back() != '/')
+  if (index_file.empty() || index_file[index_file.size() - 1] != '/')
     index_file += "/";
 
   if (_matched_location && !_matched_location->index.empty())
@@ -223,8 +225,7 @@ std::string HttpResponse::handleGet(HttpRequest& req, ServerConfig& config)
 		// it check if the path correspond to any of the routes
 		if (config._routes_collections._routes[i].path == req.path)
 		{
-			std::string body = config._routes_collections._routes[i].func(config._routes_collections._routes[i]); // if yes we simply call the func
-
+			std::string body = config._routes_collections._routes[i].func(config._routes_collections._routes[i]);
 			// jsp pq faut faire cet merde pr avoir la longueur du body mais bon
 			std::stringstream ss;
 			ss << body.length();
@@ -239,24 +240,36 @@ std::string HttpResponse::handleGet(HttpRequest& req, ServerConfig& config)
 
 std::string HttpResponse::build(const HttpRequest& req, const ServerConfig& config) {
     try {
+        if (req.method == "GET") {
+            for (size_t i = 0; i < config._routes_collections._routes.size(); i++) {
+                if (config._routes_collections._routes[i].path == req.path) {
+                    // On a trouvé une route custom, on l'exécute directement !
+                    return handleGet(const_cast<HttpRequest&>(req), const_cast<ServerConfig&>(config));
+                }
+            }
+        }
+
         std::string path = resolveFilePath(req, config);
         if (path.empty())
             return buildError(404, config);
+
+        size_t dot = path.rfind('.');
+        if (dot != std::string::npos) {
+            std::string ext = path.substr(dot);
+            if (ext == ".php" || ext == ".py" || ext == ".pl") {
+                if (!fileExists(path))
+                    return buildError(404, config);
+                CgiHandler cgi(req, config, path);
+                return cgi.execute();
+            }
+        }
 
         if (req.method == "DELETE")
             return handleDelete(path, config);
         if (req.method == "POST")
             return handlePost(req, path, config);
-        if (req.method == "GET" && req.path.rfind("/cgi", 0) != 0 )
-        {
-          std::cout << "GET HANDLE " << std::endl;
-          HttpRequest tmp_req = req;
-          ServerConfig tmp_config = config;
-          return handleGet(tmp_req, tmp_config);
-        }
         if (isDirectory(path))
             return handleDirectory(path, req, config);
-
         return handleFile(path, config);
     }
     catch (const std::runtime_error& e) {

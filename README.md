@@ -55,17 +55,19 @@ Validation de la route (resolveFilePath)
     → Chercher la LocationConfig qui matche le plus longuement le chemin de la requête
     → Vérifier si req.method est présente dans allow_methods
         non → throw 405 (Method Not Allowed)
-        oui → concaténer root + chemin de la requête
+        oui → concaténer root + chemin de la requête (en gérant les slashs intermédiaires)
 
 Logique GET
 
+    → req.method == "GET" ? vérifier si la route correspond à une route custom (ex: "/home")
+        oui → exécuter le RouteHandler associé et renvoyer la réponse dynamique
     → path est un dossier ? 
         → chercher le fichier index → trouvé ? lire le fichier
         → pas d'index ? vérifier autoindex → on ? générer page HTML (generateAutoindex) → off ? throw 403
     → path est un fichier ? 
         → fileExists() ? lire et renvoyer 200 OK → sinon throw 404
 
-Logique POST (Upload)
+Logique POST (Upload statique)
 
     → path est un dossier ? → throw 403
     → std::ofstream en mode écriture (out | binary)
@@ -79,9 +81,42 @@ Logique DELETE
         oui → std::remove() du fichier → succès ? renvoyer 200 OK → échec ? throw 403
 
 ___
+# Exécution des CGI (Common Gateway Interface)
+
+Détection de la ressource
+
+    → Vérifier l'extension du fichier demandé (.php, .py, .pl)
+    → Fichier existant ? non → throw 404
+
+Préparation et Communication (Pipes & Environnement)
+
+    → Instanciation de CgiHandler → buildEnv() (génération des variables d'environnement requises : REQUEST_METHOD, QUERY_STRING, etc.)
+    → pipe() x2 pour créer un canal stdin (vers le script) et un canal stdout (depuis le script)
+
+Exécution (fork & execve)
+
+    → fork() pour dédoubler le processus
+    Enfant (pid == 0) :
+        → dup2() pour connecter l'entrée et la sortie standard aux pipes
+        → execve() pour lancer l'interpréteur (ex: /usr/bin/php-cgi) avec le script cible
+    Parent (pid > 0) :
+        → write() pour envoyer req.body dans stdin_pipe (vital pour les requêtes POST vers le script)
+        → waitpid() pour attendre la fin de l'exécution du script
+        → read() sur stdout_pipe pour capturer la réponse du script
+
+Formatage de la Réponse
+
+    → parseCgiOutput() → extraire les headers générés par le CGI (Status, Content-Type) et les séparer du body
+    → Construire et renvoyer la réponse HTTP/1.1 finale
+
+___
 # Parsing
 
-	Le Parser transforme le fichier texte en structures de données C++. Il fonctionne en deux passes : d'abord tokenize() qui découpe le texte brut en tokens (server, {, listen, 8080, ;, etc.), puis parse() qui consomme ces tokens pour construire des ServerConfig et LocationConfig.
-	La tokenisation traite trois cas : les espaces/newlines séparent les tokens, les caractères {, }, ; sont eux-mêmes des tokens, et # démarre un commentaire jusqu'à la fin de ligne. Le peek()/get() avec un pos entier est un pattern classique de parser récursif descendant — tu regardes sans avancer, ou tu avances.
-	Les structures de config
-	ServerConfig représente un bloc server { } : un port, un nom, une taille max de body, des pages d'erreur, et une liste de LocationConfig. LocationConfig représente un bloc location /path { } : le chemin, la racine filesystem, le fichier index, si autoindex est actif, et les méthodes autorisées. Ces structures sont remplies une fois au démarrage, puis lues en lecture seule pendant toute la vie du serveur.
+    Le Parser transforme le fichier texte en structures de données C++. Il fonctionne en deux passes : d'abord tokenize() qui découpe le
+    texte brut en tokens (server, {, listen, 8080, ;, etc.), puis parse() qui consomme ces tokens pour construire des ServerConfig et LocationConfig.
+
+    La tokenisation traite trois cas : les espaces/newlines séparent les tokens, les caractères {, }, ; sont eux-mêmes des tokens,
+    et # démarre un commentaire jusqu'à la fin de ligne. Le peek()/get() avec un pos entier est un pattern classique de parser récursif descendant
+    — tu regardes sans avancer, ou tu avances.
+    Les structures de config
+    ServerConfig représente un bloc server { } : un port, un nom, une taille max de body, des pages d'erreur, et une liste de LocationConfig. LocationConfig représente un bloc location /path { } : le chemin, la racine filesystem, le fichier index, si autoindex est actif, et les méthodes autorisées. Ces structures sont remplies une fois au démarrage, puis lues en lecture seule pendant toute la vie du serveur.
