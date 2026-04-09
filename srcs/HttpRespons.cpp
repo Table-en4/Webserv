@@ -240,15 +240,6 @@ std::string HttpResponse::handleGet(HttpRequest& req, ServerConfig& config)
 
 std::string HttpResponse::build(const HttpRequest& req, const ServerConfig& config) {
     try {
-        if (req.method == "GET") {
-            for (size_t i = 0; i < config._routes_collections._routes.size(); i++) {
-                if (config._routes_collections._routes[i].path == req.path) {
-                    // On a trouvé une route custom, on l'exécute directement !
-                    return handleGet(const_cast<HttpRequest&>(req), const_cast<ServerConfig&>(config));
-                }
-            }
-        }
-
         std::string path = resolveFilePath(req, config);
         if (path.empty())
             return buildError(404, config);
