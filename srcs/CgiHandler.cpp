@@ -43,6 +43,8 @@ void CgiHandler::buildEnv() {
         _env["CONTENT_TYPE"] = _req.headers.at("Content-Type");
     if (_req.headers.count("Content-Length"))
         _env["CONTENT_LENGTH"] = _req.headers.at("Content-Length");
+    if (_req.headers.count("Cookie"))
+        _env["COOKIE"] = _req.headers.at("Cookie");
     else if (!_req.body.empty()) {
         std::ostringstream oss;
         oss << _req.body.size();
