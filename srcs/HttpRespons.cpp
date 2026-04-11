@@ -103,6 +103,15 @@ std::string HttpResponse::serveFile(const std::string& filepath) {
     return oss.str();
 }
 
+// a move dans un file utils TODO:
+std::string getCurrentWorkingDir() {
+    char buffer[1024]; // Taille maximale classique pour un chemin
+    if (getcwd(buffer, sizeof(buffer)) != NULL) {
+        return std::string(buffer);
+    }
+    return "";
+}
+
 std::string HttpResponse::resolveFilePath(const HttpRequest& req, const ServerConfig& config) {
     const LocationConfig* best = NULL;
     size_t best_len = 0;
@@ -130,7 +139,7 @@ std::string HttpResponse::resolveFilePath(const HttpRequest& req, const ServerCo
 
     std::string root = best->root;
     std::string suffix = req.path.substr(best_len);
-    
+
     if (suffix.empty() || suffix == "/")
         suffix = "/";
     else if (root[root.length() - 1] != '/' && suffix[0] != '/')
@@ -138,6 +147,9 @@ std::string HttpResponse::resolveFilePath(const HttpRequest& req, const ServerCo
 
     return root + suffix;
 }
+
+
+
 std::string HttpResponse::buildError(int code, const ServerConfig& config) {
     std::map<int, std::string>::const_iterator it = config.error_pages.find(code);
     std::string body;
@@ -244,6 +256,29 @@ std::string HttpResponse::build(const HttpRequest& req, const ServerConfig& conf
         if (path.empty())
             return buildError(404, config);
 
+        std::cout << "resolveFilePath => " << path << std::endl;
+        // g fait un truc degueulasse en bas mais jarrive pas a bien modif la fn resolveFilePath pour que ca marche nickel mdr
+        // Routes that use CGI scripts as index
+        if (req.path == "/me")
+        {
+            const LocationConfig* best = NULL;
+            size_t best_len = 0;
+
+            for (size_t i = 0; i < config.locations.size(); i++) {
+                const std::string& loc_path = config.locations[i].path;
+                if (req.path.substr(0, loc_path.size()) == loc_path) {
+                    if (loc_path.size() > best_len) {
+                        best_len = loc_path.size();
+                        best = &config.locations[i];
+                    }
+                }
+            }
+          // Here build custom script path for location index CGI scripts
+          std::string cgi_index_script_abs_path = getCurrentWorkingDir() + path.substr(1) + best->index;
+          CgiHandler cgi(req, config, cgi_index_script_abs_path);
+          return cgi.execute();
+        }
+        
         size_t dot = path.rfind('.');
         if (dot != std::string::npos) {
             std::string ext = path.substr(dot);
