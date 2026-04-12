@@ -1,122 +1,539 @@
-# Gestion serveur/client
+# Webserv
 
-nouvelle connexion
+> Un serveur HTTP minimaliste en C++98 avec support du multiplexing asynchrone, du virtual hosting, des CGI et d'un parsing de configuration.
 
-    → handelNewConnection() → accept() → addToEpoll(EPOLLIN)
+---
 
-epoll EPOLLIN sur client
+## Table des matières
 
-    → handleClient() → recv() → accumuler dans _client_buffers
-    → requête complète ? → construire réponse → _write_buffers[fd]
-    → setEpollOut() → EPOLL_CTL_MOD vers EPOLLOUT
+- [Description](#description)
+- [Architecture](#architecture)
+- [Fonctionnalités](#fonctionnalités)
+- [Installation](#installation)
+- [Utilisation](#utilisation)
+- [Structure du projet](#structure-du-projet)
+- [Concepts clés](#concepts-clés)
 
-epoll EPOLLOUT sur client
+---
 
-    → sendResponse() → send() depuis _write_buffers
-    → tout envoyé ? → closeClient()
-    → partiel ? → erase() ce qui est parti → on reviendra au prochain EPOLLOUT
+## Description
 
-closeClient()
+**Webserv** est un serveur web HTTP/1.1 écrit en **C++98** qui implémente les fonctionnalités essentielles d'un serveur web production-ready :
 
-    → EPOLL_CTL_DEL
-    → erase() dans les 3 maps
-    → close(fd)
+- **Multiplexing asynchrone** via `epoll` pour gérer plusieurs clients simultanément
+- **Virtual Hosting** pour servir plusieurs domaines sur une même instance
+- **Support des CGI** (PHP, Python, Perl) pour l'exécution de scripts dynamiques
+- **Parsing de configuration** flexible inspiré de Nginx
+- **Gestion complète des méthodes HTTP** (GET, POST, DELETE)
+- **Auto-indexing** et pages d'erreur personnalisées
 
-# Gestion du multiplexing
+---
 
-    accept() → fcntl(O_NONBLOCK) → addToEpoll(EPOLLIN)
+## Architecture
 
-    EPOLLIN → recv()
-        EAGAIN → return (epoll rappellera)
-        0      → closeClient (déconnexion propre)
-        >0     → accumuler → requête complète ? → _write_buffers → setEpollOut()
+### Vue d'ensemble du flux client
 
-    EPOLLOUT → send()
-        EAGAIN → return (buffer kernel plein, epoll rappellera)
-        <0     → closeClient
-        ok     → erase() → tout envoyé ? → closeClient
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    CLIENT HTTP                              │
+└────────────────────┬────────────────────────────────────────┘
+                     │
+                     ▼
+         ┌───────────────────────────┐
+         │   NEW CONNECTION          │
+         │   accept() → addToEpoll() │
+         └────────┬──────────────────┘
+                  │
+        ┌─────────┴─────────┐
+        │                   │
+        ▼                   ▼
+   ┌─────────┐         ┌──────────┐
+   │ EPOLLIN │         │ EPOLLOUT │
+   │ (Lire)  │         │ (Écrire) │
+   └────┬────┘         └────┬─────┘
+        │                   │
+        ▼                   ▼
+    recv()              send()
+    buffer              buffer
+    complet?            complet?
+        │                   │
+        ├─── OUI ───►HTTP   ├─── OUI ──► closeClient()
+        │       Response    │
+        │                   ├─── NON ──► retry on next EPOLLOUT
+        └─── NON ───► wait  │
+                next EPOLLIN └─ ERROR ──► closeClient()
+```
 
-___
-# Virtual Hosting (Routage par server_name)
+### Cycle de vie du multiplexing asynchrone
 
-Sélection de la bonne configuration pour un client
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    EVENT LOOP (epoll)                        │
+└──────────────────────────────────────────────────────────────┘
 
-    → Extraire l'en-tête "Host" depuis la requête parsée (ex: "tasty:8080" ou "localhost")
-    → Identifier le port d'arrivée du client via _client_to_config
-    → Parcourir _configs → correspondance exacte trouvée (port == port d'arrivée ET server_name == Host) ?
-        oui → utiliser cette ServerConfig spécifique
-        non → utiliser la ServerConfig par défaut (la première déclarée pour ce port)
+1. Nouvelle connexion (port d'écoute)
+   └─► accept() + fcntl(O_NONBLOCK) + addToEpoll(EPOLLIN)
 
-___
-# Traitement des Méthodes HTTP (HttpResponse)
+2. Client envoie requête
+   └─► EPOLLIN triggered
+       └─► recv() ─► accumuler dans _client_buffers
+           └─► Requête complète?
+               ├─ OUI  ─► parse request
+               │         └─► construire response dans _write_buffers[fd]
+               │         └─► setEpollOut() [EPOLLIN → EPOLLOUT]
+               │
+               └─ NON  ─► continue accumulating (wait next EPOLLIN)
 
-Validation de la route (resolveFilePath)
+3. Buffer d'écriture prêt
+   └─► EPOLLOUT triggered
+       └─► send() depuis _write_buffers[fd]
+           └─► Tout envoyé?
+               ├─ OUI  ─► closeClient()
+               ├─ NON  ─► erase() ce qui est parti
+               │         └─► attendre prochain EPOLLOUT
+               └─ ERROR ─► closeClient()
+```
 
-    → Chercher la LocationConfig qui matche le plus longuement le chemin de la requête
-    → Vérifier si req.method est présente dans allow_methods
-        non → throw 405 (Method Not Allowed)
-        oui → concaténer root + chemin de la requête (en gérant les slashs intermédiaires)
+### Sélection de la configuration (Virtual Hosting)
 
-Logique GET
+```
+┌──────────────────────────────┐
+│   Requête HTTP parsée        │
+│   Header "Host": "api.com"   │
+│   Port: 8080                 │
+└──────────────┬───────────────┘
+               │
+               ▼
+    ┌─────────────────────────┐
+    │ Chercher correspondance │
+    └──────────┬──────────────┘
+               │
+    ┌──────────▼──────────┐
+    │ Port == 8080?       │
+    │ server_name == Host?│
+    └──────┬───────────┬──┘
+           │ OUI      │ NON
+           │          │
+           ▼          ▼
+      ┌─────────┐  ┌──────────────┐
+      │ Utiliser│  │ Utiliser la  │
+      │ config  │  │ ServerConfig │
+      │ exacte  │  │ par défaut   │
+      └─────────┘  │ (1ere pour   │
+                   │  ce port)    │
+                   └──────────────┘
+```
 
-    → req.method == "GET" ? vérifier si la route correspond à une route custom (ex: "/home")
-        oui → exécuter le RouteHandler associé et renvoyer la réponse dynamique
-    → path est un dossier ? 
-        → chercher le fichier index → trouvé ? lire le fichier
-        → pas d'index ? vérifier autoindex → on ? générer page HTML (generateAutoindex) → off ? throw 403
-    → path est un fichier ? 
-        → fileExists() ? lire et renvoyer 200 OK → sinon throw 404
+### Pipeline de traitement des requêtes HTTP
 
-Logique POST (Upload statique)
+```
+┌──────────────────────────────────┐
+│        HTTP Request              │
+│  GET /api/file.txt HTTP/1.1      │
+└────────────┬─────────────────────┘
+             │
+             ▼
+    ┌────────────────────┐
+    │  resolveFilePath() │ (LocationConfig matching)
+    └────────┬───────────┘
+             │
+    ┌────────▼────────┐
+    │ Method allowed? │
+    └────┬──────┬─────┘
+    YES  │      │  NO
+         │      └─► HTTP 405 (Method Not Allowed)
+         │
+         ▼
+    ┌─────────────────┐
+    │  req.method?    │
+    └┬────────┬────┬──┘
+    │        │    │
+  GET      POST DELETE
+    │        │    │
+    ▼        ▼    ▼
+  [GET]   [POST] [DELETE]
+    │        │    │
+    └────────┴────┴──────── HTTP Response
+```
 
-    → path est un dossier ? → throw 403
-    → std::ofstream en mode écriture (out | binary)
-    → écrire le contenu complet de req.body dans le fichier cible
-    → succès ? renvoyer 201 Created
+### Traitement GET
 
-Logique DELETE
+```
+┌──────────────────────────────────┐
+│    GET /path/to/resource        │
+└────────────┬─────────────────────┘
+             │
+    ┌────────▼──────────┐
+    │ Custom Route?     │
+    │ (ex: "/api/home") │
+    └────┬──────────┬───┘
+    YES  │          │ NO
+         │          │
+         ▼          ▼
+    Execute   ┌────────────┐
+    Route     │ Directory? │
+    Handler   └────┬───┬───┘
+                YES │   │ NO
+                   │   │
+                   ▼   ▼
+            ┌─────────────────┐
+            │ Chercher index  │  ┌────────┐
+            └────┬──────┬─────┘  │ File?  │
+            YES  │      │ NO     └──┬──┬──┘
+                 │      │       YES │  │ NO
+                 ▼      ▼          ▼  ▼
+              Lire   ┌──────┐   Lire  404
+              Fichier│ Auto │ Fichier
+               200 OK│Index?└──────┬───┘
+                     └──┬──────┬───┘
+                    YES │      │ NO
+                        ▼      ▼
+                      HTML    403
+                      200 OK  Forbidden
+```
 
-    → fileExists() ?
-        non → throw 404
-        oui → std::remove() du fichier → succès ? renvoyer 200 OK → échec ? throw 403
+### Exécution des CGI (Common Gateway Interface)
 
-___
-# Exécution des CGI (Common Gateway Interface)
+```
+┌────────────────────────────────────────┐
+│   Requête vers script CGI              │
+│   GET /cgi-bin/script.php?id=42       │
+└────────────┬───────────────────────────┘
+             │
+             ▼
+    ┌────────────────────┐
+    │ Extension CGI?     │
+    │ (.php, .py, .pl)   │
+    └────┬──────────┬────┘
+    YES  │          │ NO
+         │          └─► Servir comme fichier statique
+         │
+         ▼
+    ┌─────────────────────┐
+    │  CgiHandler init    │ buildEnv()
+    │  pipe() x2 créés    │ Env: REQUEST_METHOD,
+    │  (stdin + stdout)   │      QUERY_STRING, etc.
+    └────────┬────────────┘
+             │
+             ▼
+    ┌────────────────────┐
+    │   fork()           │
+    └────┬───────────┬───┘
+         │ child     │ parent
+         │ (0)       │ (>0)
+         │           │
+         ▼           ▼
+    ┌─────────┐  ┌─────────────┐
+    │ dup2()  │  │ write()     │
+    │ execve()│  │ stdin_pipe  │
+    │ Script  │  │ ↓           │
+    │ runs    │  │ waitpid()   │
+    │         │  │ read()      │
+    │         │  │ stdout_pipe │
+    │         │  └──────┬──────┘
+    └─────────┘         │
+                        ▼
+                   ┌──────────────┐
+                   │ parseCgiOut()│
+                   │ Headers+Body │
+                   └──────┬───────┘
+                          │
+                          ▼
+                   ┌──────────────┐
+                   │ HTTP/1.1 200 │
+                   │ Response     │
+                   └──────────────┘
+```
 
-Détection de la ressource
+### Parsing de configuration
 
-    → Vérifier l'extension du fichier demandé (.php, .py, .pl)
-    → Fichier existant ? non → throw 404
+```
+┌──────────────────────────────┐
+│    config.conf (texte brut)  │
+│  server {                    │
+│    listen 8080;              │
+│    server_name example.com;  │
+│    ...                       │
+│  }                           │
+└────────────┬─────────────────┘
+             │
+             ▼
+    ┌──────────────────┐
+    │  tokenize()      │
+    │  Découpe en      │
+    │  tokens bruts    │
+    └──────┬───────────┘
+           │
+           ▼
+    ["server", "{", "listen", "8080", ";", "}"]
+           │
+           ▼
+    ┌──────────────────┐
+    │  parse()         │
+    │  Descending      │
+    │  Parser          │
+    │  peek()/get()    │
+    └──────┬───────────┘
+           │
+           ▼
+    ┌──────────────────────┐
+    │  ServerConfig        │
+    │  LocationConfig      │
+    │  Structures C++      │
+    └──────┬───────────────┘
+           │
+           ▼
+    Read-only durant
+    toute la vie du serveur
+```
 
-Préparation et Communication (Pipes & Environnement)
+---
 
-    → Instanciation de CgiHandler → buildEnv() (génération des variables d'environnement requises : REQUEST_METHOD, QUERY_STRING, etc.)
-    → pipe() x2 pour créer un canal stdin (vers le script) et un canal stdout (depuis le script)
+## Fonctionnalités
 
-Exécution (fork & execve)
+### Cœur du serveur
 
-    → fork() pour dédoubler le processus
-    Enfant (pid == 0) :
-        → dup2() pour connecter l'entrée et la sortie standard aux pipes
-        → execve() pour lancer l'interpréteur (ex: /usr/bin/php-cgi) avec le script cible
-    Parent (pid > 0) :
-        → write() pour envoyer req.body dans stdin_pipe (vital pour les requêtes POST vers le script)
-        → waitpid() pour attendre la fin de l'exécution du script
-        → read() sur stdout_pipe pour capturer la réponse du script
+| Fonctionnalité | Implémentation |
+|---|---|
+| **Multiplexing asynchrone** | `epoll` (Linux) avec `fcntl(O_NONBLOCK)` |
+| **Virtual Hosting** | Routage par `Host` header + port d'écoute |
+| **Configuration dynamique** | Parser custom (style Nginx) |
+| **Gestion des clients** | Maps de buffers (read/write) par file descriptor |
 
-Formatage de la Réponse
+### Méthodes HTTP
 
-    → parseCgiOutput() → extraire les headers générés par le CGI (Status, Content-Type) et les séparer du body
-    → Construire et renvoyer la réponse HTTP/1.1 finale
+| Méthode | Fonctionnalité |
+|---|---|
+| **GET** | Lecture fichiers statiques, index dynamique, custom routes |
+| **POST** | Upload de fichiers binaires |
+| **DELETE** | Suppression de fichiers |
 
-___
-# Parsing
+### Pages et gestion des erreurs
 
-    Le Parser transforme le fichier texte en structures de données C++. Il fonctionne en deux passes : d'abord tokenize() qui découpe le
-    texte brut en tokens (server, {, listen, 8080, ;, etc.), puis parse() qui consomme ces tokens pour construire des ServerConfig et LocationConfig.
+- Pages d'erreur personnalisées (configurable par code d'erreur)
+- Auto-indexing des répertoires (HTML généré dynamiquement)
+- Status codes HTTP standards (200, 201, 204, 301, 400-599)
 
-    La tokenisation traite trois cas : les espaces/newlines séparent les tokens, les caractères {, }, ; sont eux-mêmes des tokens,
-    et # démarre un commentaire jusqu'à la fin de ligne. Le peek()/get() avec un pos entier est un pattern classique de parser récursif descendant
-    — tu regardes sans avancer, ou tu avances.
-    Les structures de config
-    ServerConfig représente un bloc server { } : un port, un nom, une taille max de body, des pages d'erreur, et une liste de LocationConfig. LocationConfig représente un bloc location /path { } : le chemin, la racine filesystem, le fichier index, si autoindex est actif, et les méthodes autorisées. Ces structures sont remplies une fois au démarrage, puis lues en lecture seule pendant toute la vie du serveur.
+### CGI et Scripts
+
+- Support PHP, Python, Perl (via `execve` + pipes)
+- Variables d'environnement CGI standards
+- I/O en streaming (grande taille de requête/réponse)
+
+---
+
+## Installation
+
+### Prérequis
+
+- `C++98` compiler (g++, clang++)
+- Linux avec support `epoll`
+- Make
+
+### Compilation
+
+```bash
+cd Webserv
+make              # Compilation
+make clean        # Nettoyer les .o
+make fclean       # Nettoyer complètement
+make re           # Rebuild
+```
+
+Exécutable généré : `./Webserv`
+
+---
+
+## Utilisation
+
+### Configuration de base
+
+Créer un fichier `server.conf` :
+
+```nginx
+server {
+    listen       8080;
+    server_name  localhost;
+    
+    client_max_body_size 1M;
+    
+    location / {
+        root         ./www;
+        index        index.html;
+        allow_methods GET POST;
+        autoindex    on;
+    }
+    
+    location /api {
+        root         ./api;
+        allow_methods GET;
+        autoindex    off;
+    }
+    
+    error_page 404 /404.html;
+}
+```
+
+### Lancer le serveur
+
+```bash
+./Webserv server.conf
+```
+
+Le serveur écoute sur `localhost:8080` et attend les requêtes HTTP.
+
+### Exemples de requêtes
+
+```bash
+# GET simple
+curl http://localhost:8080/index.html
+
+# GET avec index auto
+curl http://localhost:8080/
+
+# POST (upload fichier)
+curl -X POST --data-binary @file.bin http://localhost:8080/upload/
+
+# DELETE
+curl -X DELETE http://localhost:8080/file.txt
+
+# CGI PHP
+curl http://localhost:8080/cgi-bin/script.php?id=42
+```
+
+---
+
+## Structure du projet
+
+```
+Webserv/
+├── Makefile                 # Build configuration
+├── README.md               # This file
+│
+├── incs/                   # Headers (.hpp)
+│   ├── Webserv.hpp         # Main includes
+│   ├── ServerConfig.hpp    # Server configuration
+│   ├── LocationConfig.hpp  # Location block
+│   ├── ServerManager.hpp   # Event loop manager
+│   ├── HttpRequest.hpp     # Request parser
+│   ├── HttpRespons.hpp     # Response generator
+│   ├── Parser.hpp          # Config parser
+│   ├── Routes.hpp          # Custom route handlers
+│   ├── CgiHandler.hpp      # CGI execution
+│   └── colors.hpp          # Terminal colors
+│
+├── srcs/                   # Sources (.cpp)
+│   ├── main.cpp            # Entry point
+│   ├── ServerManager.cpp   # Event loop
+│   ├── ServerConfig.cpp    # Server config
+│   ├── LocationConfig.cpp  # Location config
+│   ├── HttpRequest.cpp     # Request parsing
+│   ├── HttpRespons.cpp     # Response building
+│   ├── Parser.cpp          # Config parsing
+│   ├── Routes.cpp          # Route handling
+│   └── CgiHandler.cpp      # CGI execution
+│
+├── cgi-bin/                # CGI scripts (PHP, Python, etc.)
+├── www/                    # Web root (static files)
+├── routes/                 # Custom route handlers
+├── scripts/                # Utility scripts
+├── test.conf              # Example configuration
+└── .gitignore             # Git exclusions
+```
+
+---
+
+## Concepts clés
+
+### 1. **Multiplexing avec epoll**
+
+Le serveur n'utilise **pas** de threads. Au lieu de cela, il utilise `epoll` (efficient polling) pour gérer plusieurs clients simultanément :
+
+- Chaque socket client est mis en mode **non-bloquant** (`O_NONBLOCK`)
+- `epoll_wait()` bloque jusqu'à ce qu'un événement survienne
+- Les événements sont traités en boucle : EPOLLIN (données à lire), EPOLLOUT (prêt à écrire)
+
+**Avantage** : haute concurrence avec minimum de ressources.
+
+### 2. **Buffers d'accumulation**
+
+Les requêtes HTTP peuvent arriver fragmentées sur le réseau. Le serveur utilise deux maps :
+
+```cpp
+std::map<int, std::string> _client_buffers;   // Accumulation requête
+std::map<int, std::string> _write_buffers;    // Réponse à envoyer
+```
+
+La requête est parsée seulement quand elle est **complète** (détection `\r\n\r\n`).
+
+### 3. **Virtual Hosting**
+
+Un seul serveur Webserv peut héberger **plusieurs domaines** :
+
+```nginx
+server {
+    listen 8080;
+    server_name api.example.com;
+    ...
+}
+
+server {
+    listen 8080;
+    server_name web.example.com;
+    ...
+}
+```
+
+La sélection se fait via l'en-tête HTTP `Host` + le port d'écoute.
+
+### 4. **Parsing de configuration**
+
+Le Parser fonctionne en **deux passes** :
+
+1. **tokenize()** : découpe le fichier texte en tokens primitifs
+2. **parse()** : descending parser qui construit les structures C++
+
+Exemple :
+```
+Fichier texte → ["server", "{", "listen", "8080", ";", "}"]
+                              ↓
+           ServerConfig + LocationConfig (structures C++)
+```
+
+### 5. **Exécution CGI**
+
+Pour exécuter un script PHP/Python/Perl :
+
+1. **fork()** : créer un processus enfant
+2. **dup2()** : rediriger stdin/stdout vers des pipes
+3. **execve()** : remplacer le processus enfant par l'interpréteur
+4. **waitpid()** : parent attend la fin du script
+5. **Lecture du stdout** : capturer la réponse
+
+C'est le pattern classique Unix `fork → execve`.
+
+### 6. **Gestion des erreurs HTTP**
+
+Le serveur gère les erreurs avec des codes HTTP standards :
+
+| Code | Signification |
+|---|---|
+| **200** | OK |
+| **201** | Created (POST success) |
+| **204** | No Content |
+| **301** | Moved Permanently |
+| **400** | Bad Request |
+| **403** | Forbidden (autoindex off) |
+| **404** | Not Found |
+| **405** | Method Not Allowed |
+| **500** | Internal Server Error |
+| **505** | HTTP Version Not Supported |
+
+---
+
+## Notes
+
+- Code en **C++98** (compatibilité maximale)
+- Pas de dépendances externes
+- Compilé avec `-Wall -Werror -Wextra`
+- Testé sur Linux (epoll support required)
