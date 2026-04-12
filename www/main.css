@@ -114,7 +114,6 @@ button:hover {
     transition: 0.2s ease;
 }
 
-/* Effet floating */
 .input-group input:focus + label,
 .input-group input:not(:placeholder-shown) + label {
     top: -8px;
