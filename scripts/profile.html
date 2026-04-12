@@ -3,12 +3,67 @@
 <head>
     <meta charset="utf-8">
     <title>Profile</title>
+    <style>
+		/*je sais pas pourquoi quand je cré un fichier*/
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #333745;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        h1 {
+            background-color: #E0D3DE;
+            color: #333745;
+            padding: 20px 30px;
+            border-radius: 10px 10px 0 0;
+            font-size: 2rem;
+            text-align: center;
+        }
+
+        ul {
+            background-color: white;
+            padding: 20px 30px;
+            border-radius: 0 0 10px 10px;
+            list-style: none;
+            width: 100%;
+            max-width: 400px;
+        }
+
+        li {
+            padding: 10px 0;
+            font-size: 1.1rem;
+            color: #333745;
+            border-bottom: 1px solid #E0D3DE;
+        }
+
+        li:last-child {
+            border-bottom: none;
+        }
+
+        li:first-child,
+        li:last-child {
+            color: #9D69A3;
+            font-weight: bold;
+        }
+    </style>
 </head>
 <body>
-    <h1>Hello {{username}} !</h1>
-    <ul>
-        <li>first name: {{first_name}}</li>
-        <li>last name: {{last_name}}</li>
-    </ul>
+    <div>
+        <h1>Hello {{username}}!</h1>
+        <ul>
+            <li>first name: {{first_name}}</li>
+            <li>last name: {{last_name}}</li>
+        </ul>
+    </div>
 </body>
 </html>
