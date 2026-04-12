@@ -2,14 +2,15 @@
     font-weight: bold;
     color: #040D04;
     background-color: #E0D3DE;
-    padding: 30px;
-    border-radius: 60%;
+    padding: 15px;
+    margin: 20px auto;
+    box-sizing: border-box;
+    border-radius: 12px;
     width: 280px;
-    height: 40px;
-    justify-content: center;
-    align-items: center;
-    /*grid-column: 3;
-    grid-row: 4;*/
+}
+
+* {
+    box-sizing: border-box;
 }
 
 form {

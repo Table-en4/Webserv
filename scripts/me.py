@@ -28,6 +28,13 @@ def parse_cookies(cookie_header):
             cookies[key.strip()] = value.strip()
     return cookies
 
+def render_template(path, **kwargs):
+    with open(path, "r", encoding="utf-8") as f:
+        html = f.read()
+    for key, value in kwargs.items():
+        html = html.replace("{{" + key + "}}", value)
+    return html
+
 def main():
     # CORRECTION : HTTP_COOKIE et non COOKIE
     cookie_header = os.environ.get("HTTP_COOKIE", "")
@@ -53,20 +60,12 @@ def main():
     last_name = payload.get("last_name", "")
     username = payload.get("username", "")
 
-    html = f'''<!DOCTYPE html>
-			<html>
-			<head>
-				<meta charset='utf-8'>
-				<title>Profile</title>
-			</head>
-			<body>
-				<h1>Hello {username} !</h1>
-				<ul>
-					<li>first name: {first_name}</li>
-					<li>last name: {last_name}</li>
-				</ul>
-			</body>
-			</html>'''
+    html = render_template(
+		"profile.html",
+		username=username,
+		first_name=first_name,
+		last_name=last_name
+	)
 
     sys.stdout.write("Content-Type: text/html\r\n")
     sys.stdout.write("\r\n")
