@@ -36,6 +36,8 @@ void CgiHandler::buildEnv() {
     _env["SERVER_NAME"]     = _config.server_name;
     _env["SERVER_PORT"]     = port_oss.str();
     _env["REDIRECT_STATUS"] = "200";
+    _env["SERVER_PROTOCOL"] = "HTTP/1.1";
+    _env["GATEWAY_INTERFACE"] = "CGI/1.1";
 
     if (_req.headers.count("Host"))
         _env["HTTP_HOST"] = _req.headers.at("Host");
@@ -43,9 +45,11 @@ void CgiHandler::buildEnv() {
         _env["CONTENT_TYPE"] = _req.headers.at("Content-Type");
     if (_req.headers.count("Content-Length"))
         _env["CONTENT_LENGTH"] = _req.headers.at("Content-Length");
+
     if (_req.headers.count("Cookie"))
-        _env["COOKIE"] = _req.headers.at("Cookie");
-    else if (!_req.body.empty()) {
+        _env["HTTP_COOKIE"] = _req.headers.at("Cookie");
+
+    if (!_req.body.empty() && !_env.count("CONTENT_LENGTH")) {
         std::ostringstream oss;
         oss << _req.body.size();
         _env["CONTENT_LENGTH"] = oss.str();
@@ -53,32 +57,56 @@ void CgiHandler::buildEnv() {
 }
 
 std::string CgiHandler::parseCgiOutput(const std::string& raw) {
-    //Le CGI retourne ses propres headers + body
-    //on doit construire la réponse HTTP complète
     size_t sep = raw.find("\r\n\r\n");
     if (sep == std::string::npos)
         sep = raw.find("\n\n");
     if (sep == std::string::npos)
         return "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n";
 
+    size_t header_block_len = (raw[sep] == '\r') ? 4 : 2;
     std::string cgi_headers = raw.substr(0, sep);
-    std::string body = raw.substr(sep + (raw[sep] == '\r' ? 4 : 2));
+    std::string body = raw.substr(sep + header_block_len);
 
-    //on cherche le status dans les headers CGI
     int status_code = 200;
     std::string status_msg = "OK";
+
     size_t status_pos = cgi_headers.find("Status:");
     if (status_pos != std::string::npos) {
         size_t end = cgi_headers.find('\n', status_pos);
         std::string status_line = cgi_headers.substr(status_pos + 7, end - status_pos - 7);
-        while (!status_line.empty() && status_line[0] == ' ')
+        // trim \r et espaces
+        while (!status_line.empty() && (status_line[0] == ' ' || status_line[0] == '\r'))
             status_line.erase(0, 1);
+        while (!status_line.empty() && (status_line[status_line.size()-1] == ' ' || status_line[status_line.size()-1] == '\r'))
+            status_line.erase(status_line.size()-1);
+
         status_code = std::atoi(status_line.c_str());
+
+        //extraire le message si présent ex: "303 See Other"
+        size_t space = status_line.find(' ');
+        if (space != std::string::npos)
+            status_msg = status_line.substr(space + 1);
+        else
+            status_msg = (status_code == 200 ? "OK" :
+                         status_code == 303 ? "See Other" :
+                         status_code == 403 ? "Forbidden" :
+                         status_code == 404 ? "Not Found" : "Internal Server Error");
+    }
+
+    std::string cleaned_headers;
+    std::istringstream hstream(cgi_headers);
+    std::string hline;
+    while (std::getline(hstream, hline)) {
+        if (!hline.empty() && hline[hline.size()-1] == '\r')
+            hline.erase(hline.size()-1);
+        if (hline.substr(0, 7) == "Status:")
+            continue;
+        cleaned_headers += hline + "\r\n";
     }
 
     std::ostringstream response;
     response << "HTTP/1.1 " << status_code << " " << status_msg << "\r\n"
-             << cgi_headers << "\r\n"
+             << cleaned_headers
              << "Content-Length: " << body.size() << "\r\n"
              << "\r\n"
              << body;
@@ -87,7 +115,6 @@ std::string CgiHandler::parseCgiOutput(const std::string& raw) {
 }
 
 std::string CgiHandler::execute() {
-    //trouver l'interpréteur selon l'extension
     size_t dot = _script_path.rfind('.');
     if (dot == std::string::npos)
         throw std::runtime_error("500");
@@ -97,7 +124,19 @@ std::string CgiHandler::execute() {
     if (interpreter.empty())
         throw std::runtime_error("500");
 
-    //construire l'environnement pour execve
+    char resolved[4096];
+    if (realpath(_script_path.c_str(), resolved) == NULL)
+        throw std::runtime_error("500");
+    std::string abs_script_path = resolved;
+
+    //script_dir = dossier contenant le script
+    std::string script_dir = abs_script_path;
+    size_t last_slash = script_dir.rfind('/');
+    if (last_slash != std::string::npos)
+        script_dir = script_dir.substr(0, last_slash);
+
+    _env["SCRIPT_FILENAME"] = abs_script_path;
+
     std::vector<std::string> env_strings;
     for (std::map<std::string, std::string>::iterator it = _env.begin(); it != _env.end(); ++it)
         env_strings.push_back(it->first + "=" + it->second);
@@ -107,10 +146,9 @@ std::string CgiHandler::execute() {
         env_ptrs.push_back(const_cast<char*>(env_strings[i].c_str()));
     env_ptrs.push_back(NULL);
 
-    //argv pour execve : [interpreter, script, NULL]
     std::vector<char*> argv;
     argv.push_back(const_cast<char*>(interpreter.c_str()));
-    argv.push_back(const_cast<char*>(_script_path.c_str()));
+    argv.push_back(const_cast<char*>(abs_script_path.c_str()));
     argv.push_back(NULL);
 
     int stdin_pipe[2];
@@ -119,17 +157,14 @@ std::string CgiHandler::execute() {
     if (pipe(stdin_pipe) < 0 || pipe(stdout_pipe) < 0)
         throw std::runtime_error("500");
 
-    std::string script_dir = _script_path;
-    size_t last_slash = script_dir.rfind('/');
-    if (last_slash != std::string::npos)
-        script_dir = script_dir.substr(0, last_slash);
-
     pid_t pid = fork();
-    if (pid < 0)
+    if (pid < 0) {
+        close(stdin_pipe[0]); close(stdin_pipe[1]);
+        close(stdout_pipe[0]); close(stdout_pipe[1]);
         throw std::runtime_error("500");
+    }
 
     if (pid == 0) {
-
         close(stdin_pipe[1]);
         dup2(stdin_pipe[0], STDIN_FILENO);
         close(stdin_pipe[0]);
@@ -147,7 +182,6 @@ std::string CgiHandler::execute() {
     close(stdin_pipe[0]);
     close(stdout_pipe[1]);
 
-    //Envoyer le body au CGI si POST
     if (!_req.body.empty())
         write(stdin_pipe[1], _req.body.c_str(), _req.body.size());
     close(stdin_pipe[1]);
@@ -155,11 +189,10 @@ std::string CgiHandler::execute() {
     std::string output;
     char buf[4096];
     ssize_t n;
-    while ((n = read(stdout_pipe[0], buf, sizeof(buf) - 1)) > 0) {
-        buf[n] = '\0';
+    while ((n = read(stdout_pipe[0], buf, sizeof(buf) - 1)) > 0)
         output += std::string(buf, n);
-    }
     close(stdout_pipe[0]);
+
     int status;
     waitpid(pid, &status, 0);
 
