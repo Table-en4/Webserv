@@ -4,34 +4,45 @@
 	<meta charset='utf-8'>
 	<meta http-equiv='X-UA-Compatible' content='IE=edge'>
 	<title>Page Title</title>
+	<style>
+		body {
+			background-color: #333745;
+		}
+	</style>
 	<meta name='viewport' content='width=device-width, initial-scale=1'>
 	<link rel='stylesheet' type='text/css' media='screen' href='main.css'>
 	<script src='main.js'></script>
 </head>
 <body>
-	<h1>index page</h1>
+	<div class="IndexPage">
+		<center>
+    		<h1>Forms page</h1>
+		</center>
+	</div>
+
 	<div>
-		<form
-			method="post"
-			action="/cgi-bin/forms.py"
-		>
-			<input
-				name="first_name"
-				placeholder="enter your first name here"
-				required
-			/>
-			<input
-				name="last_name"
-				placeholder="enter your last name here"
-				required
-			/>
-			<input
-				name="username"
-				placeholder="enter your username here"
-				required
-			/>
-			<button type="submit">Login</button>
-		</form>
+		<center>
+			<form method="post" action="/cgi-bin/forms.py">
+
+				<div class="input-group">
+					<input type="text" name="first_name" required placeholder=" " />
+					<label>First name</label>
+				</div>
+
+				<div class="input-group">
+					<input type="text" name="last_name" required placeholder=" " />
+					<label>Last name</label>
+				</div>
+
+				<div class="input-group">
+					<input type="text" name="username" required placeholder=" " />
+					<label>Username</label>
+				</div>
+
+				<button type="submit">Login</button>
+				
+			</form>
+		</center>
 	</div>
 </body>
 </html>
