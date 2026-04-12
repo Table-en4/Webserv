@@ -30,7 +30,10 @@ const ServerConfig& ServerManager::getServerConfig(int client_fd, const HttpRequ
         }
     }
 
-    return _configs[default_cfg_idx];
+    if (host.empty() || host == "localhost" || host == "127.0.0.1")
+        return _configs[default_cfg_idx];
+
+    throw std::runtime_error("400");
 }
 
 bool ServerManager::isServerFd(int fd) const {
