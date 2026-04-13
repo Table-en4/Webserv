@@ -1,24 +1,79 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-	<meta charset='utf-8'>
-	<meta http-equiv='X-UA-Compatible' content='IE=edge'>
-	<title>Page Title</title>
-	<meta name='viewport' content='width=device-width, initial-scale=1'>
-	<link rel='stylesheet' type='text/css' media='screen' href='main.css'>
-	<script src='main.js'></script>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Upload File</title>
 
+    <style>
+        body {
+            background-color: #333745;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-top: 40px;
+        }
+
+        .UploadFileText h1 {
+            font-weight: bold;
+            color: #040D04;
+            background-color: #E0D3DE;
+            padding: 15px;
+            border-radius: 12px;
+            width: 280px;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        form {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+        }
+
+        input[type="file"] {
+            width: 280px;
+            padding: 12px 15px;
+            border-radius: 10px;
+            border: none;
+            outline: none;
+            background-color: #1C1C1E;
+            color: white;
+            font-weight: 600;
+            font-size: 15px;
+        }
+
+        button {
+            font-weight: bold;
+            color: #040D04;
+            background-color: #E0D3DE;
+            padding: 12px 20px;
+            border-radius: 12px;
+            border: none;
+            cursor: pointer;
+            width: 140px;
+        }
+
+        button:hover {
+            background-color: #d2c4cf;
+        }
+    </style>
+
+    <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
-<body>
-	<h1>Upload file form</h1>
-	<form
-		method="post"
-		action="/upload_file_script"
-		enctype="multipart/form-data"
-	>
 
-		<input name="file" type="file" required>
-		<button type="submit" >Upload</button>
-	</form>
+<body>
+
+    <div class="UploadFileText">
+        <h1>Upload file form</h1>
+    </div>
+
+    <form method="post" action="/upload_file_script" enctype="multipart/form-data">
+        <input name="file" type="file" required>
+        <button type="submit">Upload</button>
+    </form>
+
 </body>
 </html>
