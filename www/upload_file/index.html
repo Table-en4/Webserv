@@ -34,15 +34,24 @@
         }
 
         input[type="file"] {
+            display: none;
+        }
+
+        .custom-file-upload {
             width: 280px;
             padding: 12px 15px;
             border-radius: 10px;
-            border: none;
-            outline: none;
             background-color: #1C1C1E;
             color: white;
             font-weight: 600;
             font-size: 15px;
+            cursor: pointer;
+            text-align: left;
+            display: block;
+        }
+
+        .custom-file-upload:hover {
+            background-color: #2a2a2c;
         }
 
         button {
@@ -71,7 +80,12 @@
     </div>
 
     <form method="post" action="/upload_file_script" enctype="multipart/form-data">
-        <input name="file" type="file" required>
+        
+        <label for="file-upload" class="custom-file-upload">
+            Select file
+        </label>
+        <input id="file-upload" name="file" type="file" required>
+
         <button type="submit">Upload</button>
     </form>
 
