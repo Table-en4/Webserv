@@ -160,7 +160,7 @@ void ServerManager::handleClient(int client_fd) {
 
         int cfg_idx = _client_to_config.count(client_fd) ? _client_to_config[client_fd] : 0;
         if (content_length > _configs[cfg_idx].client_max_body) {
-            _write_buffers[client_fd] = "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            _write_buffers[client_fd] = "HTTP/1.1 413 Payload Too Large\r\n\r\n<h1>Payload is too large</h1>";
             setEpollOut(client_fd);
             return;
         }
