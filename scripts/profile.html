@@ -21,6 +21,23 @@
             padding: 20px;
         }
 
+        div#main {
+            display: flex;
+            flex-direction: column;
+            gap: 50px;
+        }
+
+        div#links {
+            display: flex;
+            flex-direction: column;
+            background-color: white;
+            border: solid black;
+            border-radius: 5%;
+            padding: 25px;
+            gap: 4px;
+        }
+
+
         h1 {
             background-color: #E0D3DE;
             color: #333745;
@@ -28,6 +45,7 @@
             border-radius: 10px 10px 0 0;
             font-size: 2rem;
             text-align: center;
+            max-width: 400px;
         }
 
         ul {
@@ -58,12 +76,25 @@
     </style>
 </head>
 <body>
-    <div>
-        <h1>Hello {{username}}!</h1>
-        <ul>
-            <li>first name: {{first_name}}</li>
-            <li>last name: {{last_name}}</li>
-        </ul>
+    <div id="main">
+        <div>
+            <h1>Hello {{username}} !</h1>
+            <ul>
+                <li>first name: {{first_name}}</li>
+                <li>last name: {{last_name}}</li>
+            </ul>
+        </div>
+
+        <div id="links">
+            <!-- page -> upload_file -->
+            <p>• Click <a href="/upload_file">here</a> to upload files !</p>
+
+            <p>
+                • <a href="/random_page">Page that does not exist</a>
+            </p>
+
+        </div>
     </div>
+
 </body>
 </html>
