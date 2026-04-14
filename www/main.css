@@ -25,7 +25,7 @@
     bottom: 0px;
     right: 20px;
     z-index: 9999;
-    transition: transform 0.6s ease;
+    transition: transform 0.7s ease;
 }
 
 .Credit:hover {
