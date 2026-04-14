@@ -14,10 +14,8 @@ class HttpResponse {
 	private:
 		const LocationConfig* _matched_location;
 
-	private:
 		std::string buildError(int code, const ServerConfig& config);
 		std::string serveFile(const std::string& filepath);
-		std::string buildHeaders(int code, const std::string& content_type, size_t body_len);
 
 		std::string resolveFilePath(const HttpRequest& req, const ServerConfig& config);
 		std::string getStatusMessage(int code);
@@ -33,6 +31,7 @@ class HttpResponse {
 
 	public:
 		std::string build(const HttpRequest& req, const ServerConfig& config);
+		std::string buildHeaders(int code, const std::string& content_type, size_t body_len);
 
 		HttpResponse();
 };

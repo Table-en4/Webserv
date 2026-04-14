@@ -176,7 +176,7 @@ std::string CgiHandler::execute() {
         chdir(script_dir.c_str());
 
         execve(interpreter.c_str(), argv.data(), env_ptrs.data());
-        exit(1);
+        exit(0);
     }
 
     close(stdin_pipe[0]);
@@ -186,15 +186,41 @@ std::string CgiHandler::execute() {
         write(stdin_pipe[1], _req.body.c_str(), _req.body.size());
     close(stdin_pipe[1]);
 
+    // boucle while anti timeout
+    int time_to_wait_us = 5000000; // 5000000us == 5 seconds
+    int time_passed = 0;
+    pid_t res;
+    while (true)
+    {
+        res = waitpid(pid, NULL, WNOHANG);
+        // std::cout << "res: " << res << " <> pid: " << pid << std::endl;
+        if (res == pid) // pid finished
+            break;
+        else if (res == -1)
+        {
+            kill(pid, SIGTERM);
+            usleep(100000);
+            std::string body = "<html><body><h1>Internal server error 500</h1></body></html>";
+            HttpResponse r;
+            return r.buildHeaders(500, "text/html", body.size()) + body;
+        }
+        if (time_passed >= time_to_wait_us)
+        {
+            kill(pid, SIGTERM);
+            std::string body = "<html><body><h1>Internal server error 504 Gateway timeout</h1></body></html>";
+            HttpResponse r;
+            return r.buildHeaders(504, "text/html", body.size()) + body;
+        }
+        usleep( 10000);
+        time_passed += 10000;
+    }
+
     std::string output;
     char buf[4096];
     ssize_t n;
     while ((n = read(stdout_pipe[0], buf, sizeof(buf) - 1)) > 0)
         output += std::string(buf, n);
     close(stdout_pipe[0]);
-
-    int status;
-    waitpid(pid, &status, 0);
 
     if (output.empty())
         throw std::runtime_error("500");

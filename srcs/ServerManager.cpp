@@ -105,8 +105,8 @@ void ServerManager::sendResponse(int client_fd) {
     ssize_t sent = send(client_fd, response.c_str(), response.size(), 0);
 
     if (sent < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-            return ;
+        // if (errno == EAGAIN || errno == EWOULDBLOCK)
+        //     return ;
         closeClient(client_fd);
         return;
     }
@@ -133,8 +133,8 @@ void ServerManager::handleClient(int client_fd) {
     int bytes_read = recv(client_fd, tmp, sizeof(tmp) - 1, 0);
 
     if (bytes_read < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-            return ;
+        // if (errno == EAGAIN || errno == EWOULDBLOCK)
+        //     return ;
         closeClient(client_fd);
         return;
     }
