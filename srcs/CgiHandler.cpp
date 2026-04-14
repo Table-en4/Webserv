@@ -1,4 +1,7 @@
 #include "../incs/Webserv.hpp"
+#include <fcntl.h>
+#include <signal.h>
+#include <unistd.h>
 
 CgiHandler::CgiHandler(const HttpRequest& req, const ServerConfig& config, const std::string& script_path)
     : _script_path(script_path), _req(req), _config(config) {
@@ -129,7 +132,6 @@ std::string CgiHandler::execute() {
         throw std::runtime_error("500");
     std::string abs_script_path = resolved;
 
-    //script_dir = dossier contenant le script
     std::string script_dir = abs_script_path;
     size_t last_slash = script_dir.rfind('/');
     if (last_slash != std::string::npos)
@@ -174,52 +176,66 @@ std::string CgiHandler::execute() {
         close(stdout_pipe[1]);
 
         chdir(script_dir.c_str());
-
         execve(interpreter.c_str(), argv.data(), env_ptrs.data());
-        exit(0);
+        exit(1);
     }
 
+    // parent
     close(stdin_pipe[0]);
     close(stdout_pipe[1]);
 
-    if (!_req.body.empty())
+    // write body to CGI stdin
+    if (!_req.body.empty()) {
         write(stdin_pipe[1], _req.body.c_str(), _req.body.size());
+    }
     close(stdin_pipe[1]);
 
-    // boucle while anti timeout
-    // int time_to_wait_us = 5000000; // 5000000us == 5 seconds
-    // int time_passed = 0;
-    // pid_t res;
-    // while (true)
-    // {
-    //     res = waitpid(pid, NULL, WNOHANG);
-    //     // std::cout << "res: " << res << " <> pid: " << pid << std::endl;
-    //     if (res == pid) // pid finished
-    //         break;
-    //     else if (res == -1)
-    //     {
-    //         kill(pid, SIGTERM);
-    //         usleep(100000);
-    //         std::string body = "<html><body><h1>Internal server error 500</h1></body></html>";
-    //         HttpResponse r;
-    //         return r.buildHeaders(500, "text/html", body.size()) + body;
-    //     }
-    //     if (time_passed >= time_to_wait_us)
-    //     {
-    //         kill(pid, SIGTERM);
-    //         std::string body = "<html><body><h1>Internal server error 504 Gateway timeout</h1></body></html>";
-    //         HttpResponse r;
-    //         return r.buildHeaders(504, "text/html", body.size()) + body;
-    //     }
-    //     usleep( 10000);
-    //     time_passed += 10000;
-    // }
+    // rendre stdout_pipe[0] non-bloquant pour éviter le read() bloquant
+    fcntl(stdout_pipe[0], F_SETFL, O_NONBLOCK);
 
+    // timeout: 5 secondes, poll toutes les 10ms
+    const int TIMEOUT_US  = 5000000;
+    const int SLEEP_US    = 10000;
+    int elapsed           = 0;
     std::string output;
     char buf[4096];
-    ssize_t n;
-    while ((n = read(stdout_pipe[0], buf, sizeof(buf) - 1)) > 0)
-        output += std::string(buf, n);
+
+    while (true) {
+        // tenter de lire ce qui est dispo
+        ssize_t n;
+        while ((n = read(stdout_pipe[0], buf, sizeof(buf))) > 0)
+            output += std::string(buf, n);
+
+        // vérifier si le child a terminé
+        int status;
+        pid_t res = waitpid(pid, &status, WNOHANG);
+        if (res == pid) {
+            // process terminé — vider le reste du pipe
+            while ((n = read(stdout_pipe[0], buf, sizeof(buf))) > 0)
+                output += std::string(buf, n);
+            break;
+        }
+        if (res == -1) {
+            close(stdout_pipe[0]);
+            std::string body = "<html><body><h1>500 Internal Server Error</h1></body></html>";
+            HttpResponse r;
+            return r.buildHeaders(500, "text/html", body.size()) + body;
+        }
+
+        // timeout
+        if (elapsed >= TIMEOUT_US) {
+            kill(pid, SIGKILL);
+            waitpid(pid, NULL, 0);
+            close(stdout_pipe[0]);
+            std::string body = "<html><body><h1>504 Gateway Timeout</h1></body></html>";
+            HttpResponse r;
+            return r.buildHeaders(504, "text/html", body.size()) + body;
+        }
+
+        usleep(SLEEP_US);
+        elapsed += SLEEP_US;
+    }
+
     close(stdout_pipe[0]);
 
     if (output.empty())

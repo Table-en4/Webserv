@@ -1,42 +1,55 @@
 #include "../incs/Webserv.hpp"
+#include <sys/stat.h>
 
 HttpResponse::HttpResponse() : _matched_location(NULL) {}
 
 std::string HttpResponse::getStatusMessage(int code) {
     if (code == 200)
-		return "Ok";
+      return "Ok";
+    if (code == 201)
+      return "Created";
+    if (code == 301)
+      return "Moved Permanently";
+    if (code == 302)
+      return "Found";
     if (code == 400)
-		return "Bad Request";
+      return "Bad Request";
     if (code == 403)
-		return "Forbidden";
+      return "Forbidden";
     if (code == 404)
-		return "Not Found";
+      return "Not Found";
     if (code == 405)
-		return "Method Not Allowed";
+      return "Method Not Allowed";
+    if (code == 413)
+      return "Payload Too Large";
+    if (code == 500)
+      return "Internal Server Error";
+    if (code == 504)
+      return "Gateway Timeout";
     if (code == 505)
-		return "HTTP Version Not Supported";
+      return "HTTP Version Not Supported";
     return "Internal Server Error";
 }
 
 std::string HttpResponse::getMimeType(const std::string& path) {
     size_t dot = path.rfind('.');
     if (dot == std::string::npos)
-		return "application/octet-stream";
+		  return "application/octet-stream";
 
     std::string ext = path.substr(dot);
 
     if (ext == ".html" || ext == ".htm")
-		return "text/html";
+		  return "text/html";
     if (ext == ".css")
-		return "text/css";
+		  return "text/css";
     if (ext == ".js")
-		return "application/javascript";
+		  return "application/javascript";
     if (ext == ".png")
-		return "image/png";
+		  return "image/png";
     if (ext == ".jpg" || ext == ".jpeg")
-		return "image/jpeg";
+		  return "image/jpeg";
     if (ext == ".txt")
-		return "text/plain";
+		  return "text/plain";
     return "application/octet-stream";
 }
 
@@ -71,7 +84,7 @@ std::string HttpResponse::generateAutoindex(const std::string& dir_path, const s
     if (stat(full_path.c_str(), &st) == 0 && S_ISDIR(st.st_mode))
       display += "/";
     
-    html << "<a herf=\"" << url_path;
+    html << "<a href=\"" << url_path;
     if (url_path.empty() || url_path[url_path.size() - 1] != '/')
       html << "/";
     html << name << "\"" << display << "</a>\n";
@@ -105,7 +118,7 @@ std::string HttpResponse::serveFile(const std::string& filepath) {
 
 // a move dans un file utils TODO:
 std::string getCurrentWorkingDir() {
-    char buffer[1024]; // Taille maximale classique pour un chemin
+    char buffer[1024];
     if (getcwd(buffer, sizeof(buffer)) != NULL) {
         return std::string(buffer);
     }
@@ -186,19 +199,127 @@ std::string HttpResponse::handleDelete(const std::string& path, const ServerConf
     return buildError(403, config);
 }
 
-std::string HttpResponse::handlePost(const HttpRequest& req, const std::string& path, const ServerConfig& config) {
-  if (isDirectory(path))
-    return buildError(403, config);
-  
-  std::ofstream outfile(path.c_str(), std::ios::out | std::ios::binary);
-  if (!outfile.is_open())
-    return buildError(403, config);
-  
-  outfile.write(req.body.c_str(), req.body.size());
-  outfile.close();
+// Extrait le nom de fichier depuis Content-Disposition: form-data; name="file"; filename="foo.txt"
+static std::string extractFilename(const std::string& disposition) {
+    size_t pos = disposition.find("filename=\"");
+    if (pos == std::string::npos)
+        return "";
+    pos += 10;
+    size_t end = disposition.find("\"", pos);
+    if (end == std::string::npos)
+        return "";
+    return disposition.substr(pos, end - pos);
+}
 
-  std::string body = "<html><body><h1>201 Created: File saved successfully.</h1></body></html>";
-  return buildHeaders(201, "text/html", body.size()) + body;
+std::string HttpResponse::handlePost(const HttpRequest& req, const std::string& path, const ServerConfig& config) {
+    std::string content_type = "";
+    if (req.headers.count("Content-Type"))
+        content_type = req.headers.at("Content-Type");
+
+    size_t mp_pos = content_type.find("multipart/form-data");
+    if (mp_pos != std::string::npos) {
+        size_t b_pos = content_type.find("boundary=");
+        if (b_pos == std::string::npos)
+            return buildError(400, config);
+        std::string boundary = "--" + content_type.substr(b_pos + 9);
+        while (!boundary.empty() && (boundary[boundary.size()-1] == '\r' || boundary[boundary.size()-1] == ' '))
+            boundary.erase(boundary.size()-1);
+
+        std::string store_dir = "";
+        if (_matched_location && !_matched_location->upload_store.empty())
+            store_dir = _matched_location->upload_store;
+        else if (_matched_location && !_matched_location->root.empty())
+            store_dir = _matched_location->root;
+        else
+            store_dir = path;
+
+        if (store_dir.empty() || isDirectory(store_dir) == false) {
+            mkdir(store_dir.c_str(), 0755);
+        }
+        if (store_dir[store_dir.size()-1] != '/')
+            store_dir += "/";
+
+        const std::string& body = req.body;
+        size_t pos_body = 0;
+        bool any_saved = false;
+
+        while (true) {
+            size_t bstart = body.find(boundary, pos_body);
+            if (bstart == std::string::npos)
+                break;
+            pos_body = bstart + boundary.size();
+
+            if (pos_body + 2 <= body.size() && body.substr(pos_body, 2) == "--")
+                break;
+
+            if (pos_body < body.size() && body[pos_body] == '\r')
+              pos_body++;
+            if (pos_body < body.size() && body[pos_body] == '\n')
+              pos_body++;
+
+            std::string filename = "";
+            while (pos_body < body.size()) {
+                size_t eol = body.find("\r\n", pos_body);
+
+                if (eol == std::string::npos)
+                  eol = body.find("\n", pos_body);
+
+                if (eol == std::string::npos)
+                  break;
+
+                std::string hline = body.substr(pos_body, eol - pos_body);
+                pos_body = eol + (body[eol] == '\r' ? 2 : 1);
+                if (hline.empty())
+                  break;
+                if (hline.find("Content-Disposition:") != std::string::npos ||
+                    hline.find("content-disposition:") != std::string::npos) {
+                    filename = extractFilename(hline);
+                }
+            }
+
+            size_t part_end = body.find("\r\n" + boundary, pos_body);
+            if (part_end == std::string::npos)
+                part_end = body.find("\n" + boundary, pos_body);
+            if (part_end == std::string::npos)
+                break;
+
+            if (filename.empty()) {
+                pos_body = part_end;
+                continue;
+            }
+
+            std::string part_body = body.substr(pos_body, part_end - pos_body);
+            std::string dest = store_dir + filename;
+
+            std::ofstream outfile(dest.c_str(), std::ios::out | std::ios::binary);
+            if (!outfile.is_open())
+                return buildError(403, config);
+            outfile.write(part_body.c_str(), part_body.size());
+            outfile.close();
+            any_saved = true;
+            pos_body = part_end;
+        }
+
+        if (!any_saved)
+            return buildError(400, config);
+
+        std::string body_resp = "<html><body><h1>201 Created: File(s) uploaded successfully.</h1></body></html>";
+        return buildHeaders(201, "text/html", body_resp.size()) + body_resp;
+    }
+
+    // POST simple (non-multipart) : écrire le body dans le fichier cible
+    if (isDirectory(path))
+        return buildError(403, config);
+
+    std::ofstream outfile(path.c_str(), std::ios::out | std::ios::binary);
+    if (!outfile.is_open())
+        return buildError(403, config);
+
+    outfile.write(req.body.c_str(), req.body.size());
+    outfile.close();
+
+    std::string body_resp = "<html><body><h1>201 Created: File saved successfully.</h1></body></html>";
+    return buildHeaders(201, "text/html", body_resp.size()) + body_resp;
 }
 
 std::string HttpResponse::handleDirectory(const std::string& path, const HttpRequest& req, const ServerConfig& config) {
@@ -259,6 +380,19 @@ std::string HttpResponse::handleGet(HttpRequest& req, ServerConfig& config)
 std::string HttpResponse::build(const HttpRequest& req, const ServerConfig& config) {
     try {
         std::string path = resolveFilePath(req, config);
+
+        // redirect check — doit être après resolveFilePath qui set _matched_location
+        if (_matched_location && _matched_location->redirect_code != 0) {
+            std::ostringstream oss;
+            oss << "HTTP/1.1 " << _matched_location->redirect_code << " "
+                << getStatusMessage(_matched_location->redirect_code) << "\r\n"
+                << "Location: " << _matched_location->redirect_url << "\r\n"
+                << "Content-Length: 0\r\n"
+                << "Connection: close\r\n"
+                << "\r\n";
+            return oss.str();
+        }
+
         if (path.empty())
             return buildError(404, config);
 

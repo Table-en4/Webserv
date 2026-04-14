@@ -118,6 +118,17 @@ void Parser::parseLocation(ServerConfig& current_server) {
             
             expect(";");
         }
+        else if (directive == "upload_store") {
+            current_location.upload_store = get();
+            std::cout << MAGENTA << "   Upload store: " << BLUE << current_location.upload_store << RESET << std::endl;
+            expect(";");
+        }
+        else if (directive == "return") {
+            current_location.redirect_code = std::atoi(get().c_str());
+            current_location.redirect_url = get();
+            std::cout << MAGENTA << "   Redirect: " << BLUE << current_location.redirect_code << " -> " << current_location.redirect_url << RESET << std::endl;
+            expect(";");
+        }
         else
             throw std::runtime_error(std::string(RED) + "Error: unknown directive '" + directive + "'in location block" + RESET);
     }
