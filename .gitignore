@@ -1,3 +1,4 @@
 .vscode
 srcs/*.o
 Webserv
+__pycache__/
