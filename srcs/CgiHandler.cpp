@@ -187,33 +187,33 @@ std::string CgiHandler::execute() {
     close(stdin_pipe[1]);
 
     // boucle while anti timeout
-    int time_to_wait_us = 5000000; // 5000000us == 5 seconds
-    int time_passed = 0;
-    pid_t res;
-    while (true)
-    {
-        res = waitpid(pid, NULL, WNOHANG);
-        // std::cout << "res: " << res << " <> pid: " << pid << std::endl;
-        if (res == pid) // pid finished
-            break;
-        else if (res == -1)
-        {
-            kill(pid, SIGTERM);
-            usleep(100000);
-            std::string body = "<html><body><h1>Internal server error 500</h1></body></html>";
-            HttpResponse r;
-            return r.buildHeaders(500, "text/html", body.size()) + body;
-        }
-        if (time_passed >= time_to_wait_us)
-        {
-            kill(pid, SIGTERM);
-            std::string body = "<html><body><h1>Internal server error 504 Gateway timeout</h1></body></html>";
-            HttpResponse r;
-            return r.buildHeaders(504, "text/html", body.size()) + body;
-        }
-        usleep( 10000);
-        time_passed += 10000;
-    }
+    // int time_to_wait_us = 5000000; // 5000000us == 5 seconds
+    // int time_passed = 0;
+    // pid_t res;
+    // while (true)
+    // {
+    //     res = waitpid(pid, NULL, WNOHANG);
+    //     // std::cout << "res: " << res << " <> pid: " << pid << std::endl;
+    //     if (res == pid) // pid finished
+    //         break;
+    //     else if (res == -1)
+    //     {
+    //         kill(pid, SIGTERM);
+    //         usleep(100000);
+    //         std::string body = "<html><body><h1>Internal server error 500</h1></body></html>";
+    //         HttpResponse r;
+    //         return r.buildHeaders(500, "text/html", body.size()) + body;
+    //     }
+    //     if (time_passed >= time_to_wait_us)
+    //     {
+    //         kill(pid, SIGTERM);
+    //         std::string body = "<html><body><h1>Internal server error 504 Gateway timeout</h1></body></html>";
+    //         HttpResponse r;
+    //         return r.buildHeaders(504, "text/html", body.size()) + body;
+    //     }
+    //     usleep( 10000);
+    //     time_passed += 10000;
+    // }
 
     std::string output;
     char buf[4096];
