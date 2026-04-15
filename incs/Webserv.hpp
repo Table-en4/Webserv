@@ -23,8 +23,5 @@
 //server
 #include "ServerManager.hpp"
 
-// routes
-#include "Routes.hpp"
-
 //CGI
 #include "CgiHandler.hpp"
