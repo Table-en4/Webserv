@@ -18,7 +18,7 @@ def main():
 	filename = file_field.filename
 	file_content = file_field.file.read()
 
-	with open(filename, "wb") as file:
+	with open(f"../www/{filename}", "wb") as file:
 		file.write(file_content)
 
 	# returning http reponse
