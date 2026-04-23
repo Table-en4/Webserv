@@ -8,22 +8,19 @@
 #include "ServerConfig.hpp"
 
 class CgiHandler {
-    private:
-        std::string                         _script_path;
-        std::string                         _cgi_bin;
-        std::map<std::string, std::string>  _env;
-        const HttpRequest&                  _req;
-        const ServerConfig&                 _config;
-    
-    private:
-        //fonction tah minishell prime
-        void        buildEnv();
-        std::string parseCgiOutput(const std::string& raw);
-        std::string getInterpreter(const std::string& ext);
-        
-    public:
-        CgiHandler(const HttpRequest& req, const ServerConfig& config, const std::string& script_path);
-        ~CgiHandler();
-
-        std::string execute();
+public:
+    CgiHandler(const HttpRequest& req, const ServerConfig& config, const std::string& script_path);
+    ~CgiHandler();
+ 
+    int         launch(pid_t& out_pid);
+    static std::string parseCgiOutput(const std::string& raw);
+ 
+private:
+    std::string _script_path;
+    const HttpRequest&   _req;
+    const ServerConfig&  _config;
+    std::map<std::string, std::string> _env;
+ 
+    void        buildEnv();
+    std::string getInterpreter(const std::string& ext);
 };

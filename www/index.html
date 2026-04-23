@@ -3,7 +3,7 @@
 <head>
 	<meta charset='utf-8'>
 	<meta http-equiv='X-UA-Compatible' content='IE=edge'>
-	<title>Page Title</title>
+	<title>JS > PHP</title>
 	<style>
 		body {
 			background-color: #333745;
@@ -52,5 +52,14 @@
 			</center>
 		</h6>
 	</div>
+	<script>
+		document.querySelector(".Credit > h6").addEventListener("click", (ev) => {
+			ev.target.style.width = "200px";
+			var increment = 10;
+			setInterval(() => {
+				ev.target.style.width = (parseInt(ev.target.style.width, 10) + increment) + "px";
+			}, 50);
+		})
+	</script>
 </body>
 </html>

@@ -31,5 +31,6 @@ class Parser {
 
         void loadFile(const std::string& path);
         void tokenize(const std::string& content);
+        bool isRealPath(std::string& path);
         void parse();
 };

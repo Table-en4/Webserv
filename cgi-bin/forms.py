@@ -17,8 +17,6 @@ def create_jwt(payload, secret):
     payload_json = json.dumps(payload, separators=(',', ':')).encode('utf-8')
     unsigned_token = base64url_encode(header_json) + "." + base64url_encode(payload_json)
 
-    # CORRECTION : hmac.new -> hmac.new n'existe pas en Python3, c'est hmac.new... 
-    # La vraie API : hmac.new(key, msg, digestmod)
     signature = hmac.new(
         secret.encode('utf-8'),
         unsigned_token.encode('utf-8'),

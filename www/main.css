@@ -12,12 +12,34 @@
 .Credit h6 {
     font-weight: bold;
     color: #040D04;
-    background-color: #81B29A;
     padding: 15px;
     margin: 20px auto;
     box-sizing: border-box;
     border-radius: 12px;
     width: 280px;
+
+    background: linear-gradient(270deg,
+        red,
+        orange,
+        yellow,
+        green,
+        cyan,
+        blue,
+        violet,
+        red
+    );
+
+    background-size: 400% 400%;
+    animation: rgbMove 1.5s linear infinite, glow 2s alternate infinite;
+}
+
+@keyframes rgbMove {
+    0% {
+        background-position: 0% 50%;
+    }
+    100% {
+        background-position: 400% 50%;
+    }
 }
 
 .Credit {

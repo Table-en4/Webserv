@@ -13,6 +13,17 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <ctime>
+
+struct CgiJob {
+    pid_t        pid;
+    int          pipe_fd;
+    int          client_fd;
+    std::string  output;
+    time_t       start_time;
+    ServerConfig config;
+    HttpRequest  req;
+};
 
 class ServerManager {
 	private:
@@ -22,6 +33,7 @@ class ServerManager {
 		std::map<int, std::string>	_client_buffers;
 		std::map<int, std::string>	_write_buffers;
 		int                       	_epoll_fd;
+		std::map<int, CgiJob>       _cgi_jobs;
 
 	private:
 		void addToEpoll(int fd, uint32_t events);
@@ -33,6 +45,10 @@ class ServerManager {
 		bool isServerFd(int fd) const;
 
 		const ServerConfig& getServerConfig(int client_fd, const HttpRequest& req);
+
+		bool isCgiFd(int fd) const;
+		void handleCgiOutput(int pipe_fd);
+		void checkCgiTimeouts();
 
 	public:
 		ServerManager();

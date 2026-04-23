@@ -5,7 +5,8 @@
 
 CgiHandler::CgiHandler(const HttpRequest& req, const ServerConfig& config, const std::string& script_path)
     : _script_path(script_path), _req(req), _config(config) {
-    buildEnv();
+    if (!script_path.empty())
+        buildEnv();
 }
 
 CgiHandler::~CgiHandler() {}
@@ -31,15 +32,15 @@ void CgiHandler::buildEnv() {
 
     std::ostringstream port_oss;
     port_oss << _config.port;
-    _env["REQUEST_METHOD"]  = _req.method;
-    _env["QUERY_STRING"]    = query_string;
-    _env["SCRIPT_FILENAME"] = _script_path;
-    _env["SCRIPT_NAME"]     = path;
-    _env["PATH_INFO"]       = path;
-    _env["SERVER_NAME"]     = _config.server_name;
-    _env["SERVER_PORT"]     = port_oss.str();
-    _env["REDIRECT_STATUS"] = "200";
-    _env["SERVER_PROTOCOL"] = "HTTP/1.1";
+    _env["REQUEST_METHOD"]    = _req.method;
+    _env["QUERY_STRING"]      = query_string;
+    _env["SCRIPT_FILENAME"]   = _script_path;
+    _env["SCRIPT_NAME"]       = path;
+    _env["PATH_INFO"]         = path;
+    _env["SERVER_NAME"]       = _config.server_name;
+    _env["SERVER_PORT"]       = port_oss.str();
+    _env["REDIRECT_STATUS"]   = "200";
+    _env["SERVER_PROTOCOL"]   = "HTTP/1.1";
     _env["GATEWAY_INTERFACE"] = "CGI/1.1";
 
     if (_req.headers.count("Host"))
@@ -48,7 +49,6 @@ void CgiHandler::buildEnv() {
         _env["CONTENT_TYPE"] = _req.headers.at("Content-Type");
     if (_req.headers.count("Content-Length"))
         _env["CONTENT_LENGTH"] = _req.headers.at("Content-Length");
-
     if (_req.headers.count("Cookie"))
         _env["HTTP_COOKIE"] = _req.headers.at("Cookie");
 
@@ -59,6 +59,7 @@ void CgiHandler::buildEnv() {
     }
 }
 
+// static : utilisable depuis ServerManager sans instance complète
 std::string CgiHandler::parseCgiOutput(const std::string& raw) {
     size_t sep = raw.find("\r\n\r\n");
     if (sep == std::string::npos)
@@ -68,32 +69,29 @@ std::string CgiHandler::parseCgiOutput(const std::string& raw) {
 
     size_t header_block_len = (raw[sep] == '\r') ? 4 : 2;
     std::string cgi_headers = raw.substr(0, sep);
-    std::string body = raw.substr(sep + header_block_len);
+    std::string body        = raw.substr(sep + header_block_len);
 
-    int status_code = 200;
-    std::string status_msg = "OK";
+    int         status_code = 200;
+    std::string status_msg  = "OK";
 
     size_t status_pos = cgi_headers.find("Status:");
     if (status_pos != std::string::npos) {
         size_t end = cgi_headers.find('\n', status_pos);
         std::string status_line = cgi_headers.substr(status_pos + 7, end - status_pos - 7);
-        // trim \r et espaces
         while (!status_line.empty() && (status_line[0] == ' ' || status_line[0] == '\r'))
             status_line.erase(0, 1);
         while (!status_line.empty() && (status_line[status_line.size()-1] == ' ' || status_line[status_line.size()-1] == '\r'))
             status_line.erase(status_line.size()-1);
 
         status_code = std::atoi(status_line.c_str());
-
-        //extraire le message si présent ex: "303 See Other"
         size_t space = status_line.find(' ');
         if (space != std::string::npos)
             status_msg = status_line.substr(space + 1);
         else
-            status_msg = (status_code == 200 ? "OK" :
-                         status_code == 303 ? "See Other" :
-                         status_code == 403 ? "Forbidden" :
-                         status_code == 404 ? "Not Found" : "Internal Server Error");
+            status_msg = (status_code == 200 ? "OK"       :
+                          status_code == 303 ? "See Other" :
+                          status_code == 403 ? "Forbidden" :
+                          status_code == 404 ? "Not Found" : "Internal Server Error");
     }
 
     std::string cleaned_headers;
@@ -117,12 +115,16 @@ std::string CgiHandler::parseCgiOutput(const std::string& raw) {
     return response.str();
 }
 
-std::string CgiHandler::execute() {
+// Lance le CGI de manière non-bloquante.
+// Retourne le pipe_fd (stdout du CGI) à surveiller via epoll.
+// Écrit le body dans stdin_pipe et ferme stdin_pipe[1].
+// Le caller est responsable d'appeler waitpid + close(pipe_fd) quand epoll signale la fin.
+int CgiHandler::launch(pid_t& out_pid) {
     size_t dot = _script_path.rfind('.');
     if (dot == std::string::npos)
         throw std::runtime_error("500");
 
-    std::string ext = _script_path.substr(dot);
+    std::string ext         = _script_path.substr(dot);
     std::string interpreter = getInterpreter(ext);
     if (interpreter.empty())
         throw std::runtime_error("500");
@@ -132,8 +134,8 @@ std::string CgiHandler::execute() {
         throw std::runtime_error("500");
     std::string abs_script_path = resolved;
 
-    std::string script_dir = abs_script_path;
-    size_t last_slash = script_dir.rfind('/');
+    std::string script_dir  = abs_script_path;
+    size_t last_slash       = script_dir.rfind('/');
     if (last_slash != std::string::npos)
         script_dir = script_dir.substr(0, last_slash);
 
@@ -148,10 +150,10 @@ std::string CgiHandler::execute() {
         env_ptrs.push_back(const_cast<char*>(env_strings[i].c_str()));
     env_ptrs.push_back(NULL);
 
-    std::vector<char*> argv;
-    argv.push_back(const_cast<char*>(interpreter.c_str()));
-    argv.push_back(const_cast<char*>(abs_script_path.c_str()));
-    argv.push_back(NULL);
+    std::vector<char*> argv_vec;
+    argv_vec.push_back(const_cast<char*>(interpreter.c_str()));
+    argv_vec.push_back(const_cast<char*>(abs_script_path.c_str()));
+    argv_vec.push_back(NULL);
 
     int stdin_pipe[2];
     int stdout_pipe[2];
@@ -161,12 +163,13 @@ std::string CgiHandler::execute() {
 
     pid_t pid = fork();
     if (pid < 0) {
-        close(stdin_pipe[0]); close(stdin_pipe[1]);
+        close(stdin_pipe[0]);  close(stdin_pipe[1]);
         close(stdout_pipe[0]); close(stdout_pipe[1]);
         throw std::runtime_error("500");
     }
 
     if (pid == 0) {
+        // child
         close(stdin_pipe[1]);
         dup2(stdin_pipe[0], STDIN_FILENO);
         close(stdin_pipe[0]);
@@ -176,7 +179,7 @@ std::string CgiHandler::execute() {
         close(stdout_pipe[1]);
 
         chdir(script_dir.c_str());
-        execve(interpreter.c_str(), argv.data(), env_ptrs.data());
+        execve(interpreter.c_str(), argv_vec.data(), env_ptrs.data());
         exit(1);
     }
 
@@ -184,62 +187,13 @@ std::string CgiHandler::execute() {
     close(stdin_pipe[0]);
     close(stdout_pipe[1]);
 
-    // write body to CGI stdin
-    if (!_req.body.empty()) {
+    if (!_req.body.empty())
         write(stdin_pipe[1], _req.body.c_str(), _req.body.size());
-    }
     close(stdin_pipe[1]);
 
-    // rendre stdout_pipe[0] non-bloquant pour éviter le read() bloquant
+    // stdout_pipe[0] non-bloquant pour epoll
     fcntl(stdout_pipe[0], F_SETFL, O_NONBLOCK);
 
-    // timeout: 5 secondes, poll toutes les 10ms
-    const int TIMEOUT_US  = 5000000;
-    const int SLEEP_US    = 10000;
-    int elapsed           = 0;
-    std::string output;
-    char buf[4096];
-
-    while (true) {
-        // tenter de lire ce qui est dispo
-        ssize_t n;
-        while ((n = read(stdout_pipe[0], buf, sizeof(buf))) > 0)
-            output += std::string(buf, n);
-
-        // vérifier si le child a terminé
-        int status;
-        pid_t res = waitpid(pid, &status, WNOHANG);
-        if (res == pid) {
-            // process terminé — vider le reste du pipe
-            while ((n = read(stdout_pipe[0], buf, sizeof(buf))) > 0)
-                output += std::string(buf, n);
-            break;
-        }
-        if (res == -1) {
-            close(stdout_pipe[0]);
-            std::string body = "<html><body><h1>500 Internal Server Error</h1></body></html>";
-            HttpResponse r;
-            return r.buildHeaders(500, "text/html", body.size()) + body;
-        }
-
-        // timeout
-        if (elapsed >= TIMEOUT_US) {
-            kill(pid, SIGKILL);
-            waitpid(pid, NULL, 0);
-            close(stdout_pipe[0]);
-            std::string body = "<html><body><h1>504 Gateway Timeout</h1></body></html>";
-            HttpResponse r;
-            return r.buildHeaders(504, "text/html", body.size()) + body;
-        }
-
-        usleep(SLEEP_US);
-        elapsed += SLEEP_US;
-    }
-
-    close(stdout_pipe[0]);
-
-    if (output.empty())
-        throw std::runtime_error("500");
-
-    return parseCgiOutput(output);
+    out_pid = pid;
+    return stdout_pipe[0]; // fd à surveiller via epoll
 }
